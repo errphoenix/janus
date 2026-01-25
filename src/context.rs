@@ -1,0 +1,278 @@
+use anyhow::Result;
+use std::ops::Deref;
+use std::time::Instant;
+
+/// A stateful context defines only initialization logic (which should also
+/// initialize the state) and loop logic.
+#[cfg(feature = "render")]
+pub type StatefulContext<Init, State> = Context<Init, State, EmptyRoutine>;
+
+/// A stateful context defines only initialization logic (which should also
+/// initialize the state) and loop logic.
+#[cfg(not(feature = "render"))]
+pub type StatefulContext<Init, State> = Context<Init, State>;
+
+/// A rendering context is not aware of logical state, it only cares about
+/// render logic and any state that may be related to it.
+#[cfg(feature = "render")]
+pub type RenderingContext<Render> = Context<EmptyRoutine, EmptyRoutine, Render>;
+
+/// A dumb context has no state and no logic of any kind. It's only function is
+/// that of creating an empty window.
+///
+/// This should only be used for testing or debugging.
+#[cfg(feature = "render")]
+pub type DumbContext = Context<EmptyRoutine, EmptyRoutine, EmptyRoutine>;
+
+/// A dumb context has no state and no logic of any kind.
+///
+/// This should only be used for testing or debugging.
+#[cfg(not(feature = "render"))]
+pub type DumbContext = Context<EmptyRoutine, EmptyRoutine>;
+
+/// Stores glutin's context handles and implements winit's event handling.
+///
+/// This also makes use of 3 traits that define the application's routine:
+/// * [`Setup`] which runs after the creation of the context and collaborates
+///   to state initialisation.
+/// * [`Update`] which defines the state and handles the logic to run every
+///  'tick' in a continuous loop managed by the context.
+/// * [`Draw`] which defines render logic to run every frame before the window
+///   swaps buffers.
+#[cfg(feature = "render")]
+pub struct Context<Init, State, Render>
+where
+    Init: Setup<State, Render> + Sized,
+    State: Update + Default + Sized,
+    Render: Draw + Default + Sized,
+{
+    pub(crate) init: Option<Init>,
+    pub state: State,
+    pub renderer: Render,
+
+    /// Logic delta and render delta
+    pub(crate) delta: (DeltaCycle, DeltaCycle),
+
+    #[cfg(feature = "render")]
+    pub(crate) parameters: crate::window::DisplayParameters,
+    #[cfg(feature = "render")]
+    pub(crate) display: Option<crate::window::DisplayHandle>,
+    #[cfg(feature = "render")]
+    pub(crate) gl_ctx: Option<glutin::context::PossiblyCurrentContext>,
+    #[cfg(feature = "render")]
+    pub(crate) gl_display: crate::window::GlDisplayState,
+}
+
+/// Pure logic context manager.
+///
+/// This also makes use of 2 traits that define the application's routine:
+/// * [`Setup`] which runs after the creation of the context and collaborates
+///   to state initialisation.
+/// * [`Update`] which defines the state and handles the logic to run every
+///  'tick' in a continuous loop managed by the context.
+#[cfg(not(feature = "render"))]
+pub struct Context<Init, State>
+where
+    Init: Setup<State> + Sized,
+    State: Update + Default + Sized,
+{
+    init: Option<Init>,
+    pub state: State,
+
+    /// Logic delta and render delta
+    delta: DeltaCycle,
+}
+
+#[cfg(not(feature = "render"))]
+impl<Init, State> Context<Init, State>
+where
+    Init: Setup<State>,
+    State: Update + Default,
+{
+    pub fn new(init: Init) -> Self {
+        Self {
+            init: Some(init),
+            state: Default::default(),
+            delta: Default::default(),
+        }
+    }
+}
+
+#[cfg(feature = "render")]
+impl<Init, State, Render> Context<Init, State, Render>
+where
+    Init: Setup<State, Render>,
+    State: Update + Default,
+    Render: Draw + Default,
+{
+    pub fn new(init: Init, parameters: crate::window::DisplayParameters) -> Self {
+        Self {
+            init: Some(init),
+            state: Default::default(),
+            renderer: Default::default(),
+
+            delta: Default::default(),
+
+            parameters,
+            display: None,
+            gl_ctx: None,
+            gl_display: crate::window::GlDisplayState::Pending,
+        }
+    }
+
+    pub(crate) fn build_attributes(&self) -> winit::window::WindowAttributes {
+        use winit::{dpi::PhysicalSize, window::WindowAttributes};
+
+        use crate::window::DisplayWindowMode;
+
+        let attribs = WindowAttributes::default().with_title(self.parameters.title);
+        match self.parameters.mode {
+            DisplayWindowMode::Window => attribs.with_inner_size(PhysicalSize::new(
+                self.parameters.width,
+                self.parameters.height,
+            )),
+            DisplayWindowMode::FullScreen => {
+                use winit::window::Fullscreen;
+
+                attribs.with_fullscreen(Some(Fullscreen::Borderless(None)))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DeltaCycle {
+    last: Instant,
+    delta: DeltaTime,
+}
+
+impl Default for DeltaCycle {
+    fn default() -> Self {
+        Self {
+            last: Instant::now(),
+            delta: Default::default(),
+        }
+    }
+}
+
+impl DeltaCycle {
+    pub fn sync(&mut self) {
+        let now = Instant::now();
+        let dur = now.duration_since(self.last);
+        self.delta = DeltaTime(dur.as_secs_f64());
+        self.last = now;
+    }
+
+    pub fn delta_time(&self) -> DeltaTime {
+        self.delta
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DeltaTime(f64);
+
+impl Deref for DeltaTime {
+    type Target = f64;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[cfg(not(feature = "render"))]
+pub trait Setup<State>
+where
+    State: Update + Default,
+{
+    fn init(self, state: &mut State) -> Result<()>
+    where
+        Self: Sized;
+}
+
+#[cfg(feature = "render")]
+pub trait Setup<State, Render>
+where
+    State: Update + Default,
+    Render: Draw + Default,
+{
+    fn init(self, state: &mut State, renderer: &mut Render) -> Result<()>
+    where
+        Self: Sized;
+}
+
+pub trait Update {
+    fn update(&mut self, delta: DeltaTime);
+}
+
+#[cfg(feature = "render")]
+pub trait Draw {
+    fn draw(&self, delta: DeltaTime);
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct EmptyRoutine;
+
+#[cfg(feature = "render")]
+impl<State, Render> Setup<State, Render> for EmptyRoutine
+where
+    State: Update + Default,
+    Render: Draw + Default,
+{
+    fn init(self, _: &mut State, _: &mut Render) -> Result<()>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+}
+
+impl Update for EmptyRoutine {
+    fn update(&mut self, _: DeltaTime) {}
+}
+
+#[cfg(feature = "render")]
+impl Draw for EmptyRoutine {
+    fn draw(&self, _: DeltaTime) {}
+}
+
+#[cfg(feature = "render")]
+impl<State, Render, F> Setup<State, Render> for F
+where
+    State: Update + Default,
+    Render: Draw + Default,
+    F: FnOnce(&mut State, &mut Render) -> Result<()>,
+{
+    fn init(self, state: &mut State, renderer: &mut Render) -> Result<()>
+    where
+        Self: Sized,
+    {
+        self(state, renderer)
+    }
+}
+
+#[cfg(not(feature = "render"))]
+impl<State, F> Setup<State> for F
+where
+    State: Update + Default,
+    F: FnOnce(&mut State) -> Result<()>,
+{
+    fn init(self, state: &mut State) -> Result<()>
+    where
+        Self: Sized,
+    {
+        self(state)
+    }
+}
+
+#[cfg(not(feature = "render"))]
+impl<State> Setup<State> for EmptyRoutine
+where
+    State: Update + Default,
+{
+    fn init(self, _: &mut State) -> Result<()>
+    where
+        Self: Sized,
+    {
+        Ok(())
+    }
+}
