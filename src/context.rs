@@ -353,7 +353,7 @@ pub trait Update {
 
 #[cfg(feature = "render")]
 pub trait Draw {
-    fn draw(&self, delta: DeltaTime);
+    fn draw(&mut self, delta: DeltaTime);
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -385,7 +385,7 @@ impl Update for EmptyRoutine {
 
 #[cfg(feature = "render")]
 impl Draw for EmptyRoutine {
-    fn draw(&self, _: DeltaTime) {}
+    fn draw(&mut self, _: DeltaTime) {}
 }
 
 #[cfg(feature = "render")]
