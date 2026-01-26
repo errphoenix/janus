@@ -214,7 +214,63 @@ where
 #[derive(Clone, Debug)]
 pub struct DeltaCycle {
     last: Instant,
-    delta: DeltaTime,
+    delta: Duration,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct DeltaAccumulator {
+    step: Duration,
+    accumulated: Duration,
+    cycle: DeltaCycle,
+}
+
+impl DeltaAccumulator {
+    pub fn new(step: Duration, start_time: Instant) -> Self {
+        Self {
+            step,
+            cycle: DeltaCycle::new(start_time),
+            ..Default::default()
+        }
+    }
+
+    pub fn step(&self) -> Duration {
+        self.step
+    }
+
+    pub fn set_step(&mut self, step: Duration) {
+        self.step = step;
+    }
+
+    pub fn delta_cycle(&self) -> &DeltaCycle {
+        &self.cycle
+    }
+
+    pub fn accumulated(&self) -> Duration {
+        self.accumulated
+    }
+
+    /// Gets how "far ahead" the CPU is compared to the step speed.
+    pub fn time_ahead(&self) -> Duration {
+        self.step.saturating_sub(self.accumulated)
+    }
+
+    pub fn delta_step(&self) -> DeltaTime {
+        self.step.into()
+    }
+
+    pub fn accum(&mut self) {
+        self.cycle.sync();
+        self.accumulated += self.cycle.delta_time();
+    }
+
+    pub fn overstep(&mut self) -> bool {
+        let overstep = self.accumulated >= self.step;
+        if overstep {
+            self.accumulated -= self.step;
+        }
+
+        overstep
+    }
 }
 
 impl Default for DeltaCycle {
@@ -227,10 +283,16 @@ impl Default for DeltaCycle {
 }
 
 impl DeltaCycle {
+    pub fn new(start_time: Instant) -> Self {
+        Self {
+            last: start_time,
+            ..Default::default()
+        }
+    }
+
     pub fn sync(&mut self) {
         let now = Instant::now();
-        let dur = now.duration_since(self.last);
-        self.delta = DeltaTime(dur.as_secs_f64());
+        self.delta = now.duration_since(self.last);
         self.last = now;
     }
 
@@ -282,6 +344,10 @@ where
 }
 
 pub trait Update {
+    fn step_duration(&self) -> Duration;
+
+    fn set_step_duration(&mut self, step: Duration);
+
     fn update(&mut self, delta: DeltaTime);
 }
 
@@ -309,6 +375,12 @@ where
 
 impl Update for EmptyRoutine {
     fn update(&mut self, _: DeltaTime) {}
+
+    fn step_duration(&self) -> Duration {
+        Duration::default()
+    }
+
+    fn set_step_duration(&mut self, _: Duration) {}
 }
 
 #[cfg(feature = "render")]

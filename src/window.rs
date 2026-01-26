@@ -158,30 +158,37 @@ where
         );
 
         if let Some(init) = self.init.take() {
-            let timestamp = Instant::now();
-            if let Err(e) = init.init(&mut self.state, &mut self.renderer) {
-                event!(
-                    name: "context.init.error",
-                    Level::ERROR,
-                    "Failed to initialise application state: {e}"
-                )
-            } else {
-                let duration = Instant::now().duration_since(timestamp);
-                let millis = duration.as_millis();
-                event!(
-                    name: "context.init.ok",
-                    Level::INFO,
-                    "Successfully initialised application state. Took {millis}ms"
-                )
-            }
-        }
-    }
+            if let StateHandle::Uninitialised(state) = &mut self.state_handle {
+                let timestamp = Instant::now();
+                if let Err(e) = init.init(state, &mut self.renderer) {
+                    event!(
+                        name: "context.init.error",
+                        Level::ERROR,
+                        "Failed to initialise application state: {e}"
+                    )
+                } else {
+                    let duration = Instant::now().duration_since(timestamp);
+                    let millis = duration.as_millis();
+                    event!(
+                        name: "context.init.ok",
+                        Level::INFO,
+                        "Successfully initialised application state. Took {millis}ms"
+                    );
 
-    fn new_events(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop, cause: StartCause) {
-        if let StartCause::Poll = cause {
-            let d = &mut self.delta.0;
-            self.state.update(d.delta_time());
-            d.sync();
+                    event!(
+                        name: "context.state-thread.create",
+                        Level::INFO,
+                        "Creating state/logic thread..."
+                    );
+                    self.initialise_thread();
+                }
+            } else {
+                event!(
+                    name: "context.init.stolen-state",
+                    Level::ERROR,
+                    "Failed to initialise application state: it is not in an unitialised state"
+                );
+            }
         }
     }
 
