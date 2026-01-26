@@ -1,6 +1,9 @@
 use anyhow::Result;
-use std::ops::Deref;
+use std::ops::Sub;
+#[cfg(feature = "render")]
+use std::thread::JoinHandle;
 use std::time::Instant;
+use std::{ops::Deref, time::Duration};
 
 /// A stateful context defines only initialization logic (which should also
 /// initialize the state) and loop logic.
@@ -43,15 +46,16 @@ pub type DumbContext = Context<EmptyRoutine, EmptyRoutine>;
 pub struct Context<Init, State, Render>
 where
     Init: Setup<State, Render> + Sized,
-    State: Update + Default + Sized,
+    State: Update + Default + Sized + Sync + Send,
     Render: Draw + Default + Sized,
 {
     pub(crate) init: Option<Init>,
-    pub state: State,
+    pub state_handle: StateHandle<State>,
     pub renderer: Render,
 
-    /// Logic delta and render delta
-    pub(crate) delta: (DeltaCycle, DeltaCycle),
+    logic_thread: Option<JoinHandle<()>>,
+
+    pub(crate) render_delta: DeltaCycle,
 
     #[cfg(feature = "render")]
     pub(crate) parameters: crate::window::DisplayParameters,
@@ -61,6 +65,30 @@ where
     pub(crate) gl_ctx: Option<glutin::context::PossiblyCurrentContext>,
     #[cfg(feature = "render")]
     pub(crate) gl_display: crate::window::GlDisplayState,
+}
+
+impl<Init, State, Render> Drop for Context<Init, State, Render>
+where
+    Init: Setup<State, Render> + Sized,
+    State: Update + Default + Sized + Sync + Send,
+    Render: Draw + Default + Sized,
+{
+    fn drop(&mut self) {
+        if let Some(thread) = self.logic_thread.take() {
+            thread
+                .join()
+                .expect("logic thread has failed to join the main thread during context drop");
+        }
+    }
+}
+
+pub enum StateHandle<State>
+where
+    State: Update + Default + Sized + Sync + Send,
+{
+    Acquired(JoinHandle<()>),
+    Preparing,
+    Uninitialised(State),
 }
 
 /// Pure logic context manager.
@@ -102,21 +130,64 @@ where
 impl<Init, State, Render> Context<Init, State, Render>
 where
     Init: Setup<State, Render>,
-    State: Update + Default,
+    State: Update + Default + Sync + Send + 'static,
     Render: Draw + Default,
 {
     pub fn new(init: Init, parameters: crate::window::DisplayParameters) -> Self {
         Self {
             init: Some(init),
-            state: Default::default(),
+            state_handle: StateHandle::Uninitialised(State::default()),
             renderer: Default::default(),
 
-            delta: Default::default(),
+            logic_thread: None,
+            render_delta: Default::default(),
 
             parameters,
             display: None,
             gl_ctx: None,
             gl_display: crate::window::GlDisplayState::Pending,
+        }
+    }
+
+    pub(crate) fn initialise_thread(&mut self) {
+        let state = std::mem::replace(&mut self.state_handle, StateHandle::Preparing);
+        if let StateHandle::Uninitialised(mut state) = state {
+            use tracing::{Level, event};
+
+            let handle = std::thread::spawn(move || {
+                let mut delta = {
+                    let step = state.step_duration();
+                    let now = Instant::now();
+                    DeltaAccumulator::new(step, now)
+                };
+
+                let mut iter = 0;
+                loop {
+                    delta.accum();
+                    while delta.overstep() {
+                        if iter == 0 {
+                            delta.set_step(state.step_duration());
+                        }
+                        state.update(delta.delta_step());
+                        iter += 1;
+                    }
+                    if delta.step() > delta.accumulated() {
+                        let ahead = delta.time_ahead();
+                        std::thread::sleep(ahead * 3 / 4);
+                    }
+                    iter = 0;
+                }
+            });
+            self.state_handle = StateHandle::Acquired(handle);
+            event!(
+                name: "context.state-thread.acquire",
+                Level::INFO,
+                "State/logic thread successfully acquired application state."
+            )
+        } else {
+            panic!(
+                "state/logic thread could not be initialised: application state is already acquired"
+            )
         }
     }
 
@@ -163,13 +234,23 @@ impl DeltaCycle {
         self.last = now;
     }
 
-    pub fn delta_time(&self) -> DeltaTime {
+    pub fn delta_time(&self) -> Duration {
         self.delta
+    }
+
+    pub fn delta(&self) -> DeltaTime {
+        self.delta.into()
     }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DeltaTime(f64);
+
+impl From<Duration> for DeltaTime {
+    fn from(value: Duration) -> Self {
+        DeltaTime(value.as_secs_f64())
+    }
+}
 
 impl Deref for DeltaTime {
     type Target = f64;

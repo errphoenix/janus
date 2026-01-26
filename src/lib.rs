@@ -13,7 +13,7 @@ pub mod window;
 pub fn run<Init, State, Render>(mut context: Context<Init, State, Render>)
 where
     Init: Setup<State, Render>,
-    State: Update + Default,
+    State: Update + Default + Sync + Send + 'static,
     Render: Draw + Default,
 {
     let ev_loop = EventLoop::new().unwrap();

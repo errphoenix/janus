@@ -10,14 +10,12 @@ use glutin::{
 use glutin_winit::{DisplayBuilder, GlWindow};
 use tracing::{Level, event};
 use winit::{
-    application::ApplicationHandler,
-    event::{StartCause, WindowEvent},
-    raw_window_handle::HasWindowHandle,
+    application::ApplicationHandler, event::WindowEvent, raw_window_handle::HasWindowHandle,
     window::Window,
 };
 
 use crate::{
-    context::{Context, Draw, Setup, Update},
+    context::{Context, Draw, Setup, StateHandle, Update},
     gl::{self, get_gl_string},
 };
 
@@ -74,7 +72,7 @@ impl DisplayParameters {
 impl<Init, State, Render> ApplicationHandler for Context<Init, State, Render>
 where
     Init: Setup<State, Render>,
-    State: Update + Default,
+    State: Update + Default + Sync + Send + 'static,
     Render: Draw + Default,
 {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
@@ -198,9 +196,9 @@ where
                 if let Some(DisplayHandle { gl_surface, window }) = self.display.as_ref() {
                     let ctx = self.gl_ctx.as_ref().unwrap();
 
-                    let d = &mut self.delta.1;
-                    self.renderer.draw(d.delta_time());
-                    d.sync();
+                    let delta = &mut self.render_delta;
+                    self.renderer.draw(delta.delta());
+                    delta.sync();
 
                     gl_surface.swap_buffers(ctx).unwrap();
                     window.request_redraw();
