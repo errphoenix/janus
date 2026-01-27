@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::ops::Sub;
 #[cfg(feature = "render")]
 use std::thread::JoinHandle;
 use std::time::Instant;
