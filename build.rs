@@ -4,8 +4,13 @@ use gl_generator::{Api, Fallbacks, GlobalGenerator, Profile, Registry};
 
 use std::env;
 use std::fs::File;
-use std::os::unix::fs::FileExt;
 use std::path::Path;
+
+#[cfg(target_os = "linux")]
+use std::os::unix::fs::FileExt;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::fs::FileExt;
 
 fn main() {
     let dst = env::var("OUT_DIR").unwrap();
