@@ -66,6 +66,7 @@ where
     pub(crate) gl_display: crate::window::GlDisplayState,
 }
 
+#[cfg(feature = "render")]
 impl<Init, State, Render> Drop for Context<Init, State, Render>
 where
     Init: Setup<State, Render> + Sized,
@@ -81,6 +82,7 @@ where
     }
 }
 
+#[cfg(feature = "render")]
 pub enum StateHandle<State>
 where
     State: Update + Default + Sized + Sync + Send,
@@ -106,7 +108,6 @@ where
     init: Option<Init>,
     pub state: State,
 
-    /// Logic delta and render delta
     delta: DeltaCycle,
 }
 

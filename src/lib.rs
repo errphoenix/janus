@@ -96,6 +96,7 @@ pub mod gl {
     pub use super::gl_inner::*;
 }
 
+#[cfg(feature = "expose_gl")]
 pub use gl::{GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT, align_to_gl_ssbo};
 
 #[cfg(not(feature = "expose_gl"))]
