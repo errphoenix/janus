@@ -141,7 +141,7 @@ where
         load_gl_symbols(&config.display());
 
         // Attempt to enable v-sync.
-        // Based on my previous projects, this seems to not workcorrectly
+        // Based on my previous projects, this seems to not work correctly
         // on platforms that rely on wgl (windows).
         if let Err(err) = gl_surface.set_swap_interval(
             gl_ctx,
@@ -212,6 +212,9 @@ where
                 }
             }
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::MouseInput { state, button, .. } => {
+                dbg!(state, button);
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 dbg!(event);
             }
