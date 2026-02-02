@@ -89,26 +89,32 @@ impl Keys {
         }
     }
 
+    #[inline(always)]
     pub fn key_frames(&self, code: winit::keyboard::KeyCode) -> u16 {
         self.keyboard[code as usize]
     }
 
+    #[inline(always)]
     pub fn key_down(&self, code: winit::keyboard::KeyCode) -> bool {
         self.key_frames(code) != 0
     }
 
+    #[inline(always)]
     pub fn key_pressed(&self, code: winit::keyboard::KeyCode) -> bool {
         self.key_frames(code) == 1
     }
 
+    #[inline(always)]
     pub fn key_released(&self, code: winit::keyboard::KeyCode) -> bool {
         self.key_frames(code) == RELEASE_SIGNAL
     }
 
+    #[inline(always)]
     pub fn key_held(&self, code: winit::keyboard::KeyCode) -> bool {
         self.key_frames(code) > 1
     }
 
+    #[inline(always)]
     pub fn mouse_frames(&self, code: winit::event::MouseButton) -> u16 {
         let code = {
             let button_index: MouseButtonIndex = code.into();
@@ -118,18 +124,22 @@ impl Keys {
         self.mouse[code]
     }
 
+    #[inline(always)]
     pub fn mouse_down(&self, code: winit::event::MouseButton) -> bool {
         self.mouse_frames(code) != 0
     }
 
+    #[inline(always)]
     pub fn mouse_pressed(&self, code: winit::event::MouseButton) -> bool {
         self.mouse_frames(code) == 1
     }
 
+    #[inline(always)]
     pub fn mouse_released(&self, code: winit::event::MouseButton) -> bool {
         self.mouse_frames(code) == RELEASE_SIGNAL
     }
 
+    #[inline(always)]
     pub fn mouse_held(&self, code: winit::event::MouseButton) -> bool {
         self.mouse_frames(code) > 1
     }
@@ -149,12 +159,14 @@ impl MouseButtonIndex {
 }
 
 impl From<MouseButtonIndex> for usize {
+    #[inline(always)]
     fn from(value: MouseButtonIndex) -> Self {
         value.0
     }
 }
 
 impl From<winit::event::MouseButton> for MouseButtonIndex {
+    #[inline(always)]
     fn from(value: winit::event::MouseButton) -> Self {
         match value {
             winit::event::MouseButton::Left => Self(Self::LEFT),
@@ -180,6 +192,7 @@ impl Cursor {
         Self::default()
     }
 
+    #[inline(always)]
     pub fn update(&mut self) {
         self.delta = Default::default();
     }
@@ -202,50 +215,62 @@ impl Cursor {
         }
     }
 
+    #[inline(always)]
     pub fn current(&self) -> (f64, f64) {
         self.current
     }
 
+    #[inline(always)]
     pub fn current_f32(&self) -> (f32, f32) {
         (self.current.0 as f32, self.current.1 as f32)
     }
 
+    #[inline(always)]
     pub fn delta(&self) -> (f64, f64) {
         self.delta
     }
 
+    #[inline(always)]
     pub fn delta_f32(&self) -> (f32, f32) {
         (self.delta.0 as f32, self.delta.1 as f32)
     }
 
+    #[inline(always)]
     pub fn x(&self) -> f64 {
         self.current.0
     }
 
+    #[inline(always)]
     pub fn y(&self) -> f64 {
         self.current.1
     }
 
+    #[inline(always)]
     pub fn dx(&self) -> f64 {
         self.delta.0
     }
 
+    #[inline(always)]
     pub fn dy(&self) -> f64 {
         self.delta.1
     }
 
+    #[inline(always)]
     pub fn x_f32(&self) -> f32 {
         self.current.0 as f32
     }
 
+    #[inline(always)]
     pub fn y_f32(&self) -> f32 {
         self.current.1 as f32
     }
 
+    #[inline(always)]
     pub fn dx_f32(&self) -> f32 {
         self.delta.0 as f32
     }
 
+    #[inline(always)]
     pub fn dy_f32(&self) -> f32 {
         self.delta.1 as f32
     }
