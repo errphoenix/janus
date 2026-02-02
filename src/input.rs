@@ -79,8 +79,8 @@ impl Keys {
                         }
                     }
                     ElementState::Released => {
-                        if self.keyboard[code] > 0 && self.keyboard[code] != RELEASE_SIGNAL {
-                            self.keyboard[code] = RELEASE_SIGNAL;
+                        if self.mouse[code] > 0 && self.mouse[code] != RELEASE_SIGNAL {
+                            self.mouse[code] = RELEASE_SIGNAL;
                         }
                     }
                 }
