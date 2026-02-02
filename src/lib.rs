@@ -1,6 +1,7 @@
 #[cfg(feature = "state")]
 pub mod context;
 
+#[cfg(feature = "input")]
 pub mod input;
 
 #[cfg(feature = "textures")]

@@ -4,6 +4,9 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 use std::{ops::Deref, time::Duration};
 
+#[cfg(feature = "input")]
+use crate::input::InputState;
+
 /// A stateful context defines only initialization logic (which should also
 /// initialize the state) and loop logic.
 #[cfg(feature = "render")]
@@ -358,7 +361,11 @@ pub trait Update {
 
     fn set_step_duration(&mut self, step: Duration);
 
+    #[cfg(not(feature = "input"))]
     fn update(&mut self, delta: DeltaTime);
+
+    #[cfg(feature = "input")]
+    fn update(&mut self, input: &InputState, delta: DeltaTime);
 }
 
 #[cfg(feature = "render")]
