@@ -1,4 +1,10 @@
-use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
+pub mod stream;
+
+use std::sync::Arc;
+
+pub use stream::{DeltaPacket, IterInputStream};
+
+use crate::input::stream::InputStream;
 
 const KEYBOARD_ENTRIES: usize = 512;
 const MOUSE_ENTRIES: usize = 24;
@@ -6,73 +12,84 @@ const MOUSE_ENTRIES: usize = 24;
 const RELEASE_SIGNAL: u16 = 0xFFFF;
 const MAX_HOLD_FRAMES: u16 = 0xFFFF - 1;
 
-const INPUT_QUEUE_SECTIONS: usize = 4;
-const INPUT_QUEUE_FOLDS: usize = 8;
-const INPUT_QUEUE_FOLD_CAP: usize = size_of::<AtomicU64>() / size_of::<InputSyncPacket>();
-const INPUT_QUEUE_SECTION_CAP: usize = INPUT_QUEUE_FOLD_CAP * INPUT_QUEUE_FOLDS;
-
-#[derive(Clone, Copy, Debug)]
-pub enum InputSyncPacket {
-    Keyboard {
-        code: KeyboardKeyCode,
-        down: bool,
-    },
-    Mouse {
-        button: MouseButtonIndex,
-        down: bool,
-    },
+#[derive(Clone, Debug, Default)]
+pub struct InputDispatcher<const SLOTS: usize, const SECTIONS: usize> {
+    stream: Arc<InputStream<SLOTS, SECTIONS>>,
 }
 
-pub struct InputSyncBuffer {
-    // a fold can contain 2 packets each - atomic u128 seems to not exist
-    // the index of a fold is calculated like:
-    // fold_i = floor(inner_index / 2)
-    // fold_offset = mod(inner_index, 2)
-    queue: [[AtomicU64; INPUT_QUEUE_FOLDS]; INPUT_QUEUE_SECTIONS],
+impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS> {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-    head: InputSyncIndex,
-    tail: InputSyncIndex,
-    //todo
+    pub fn sync(&mut self) {
+        self.stream.frame_front();
+    }
+
+    pub fn handle_key_events(&mut self, event: &winit::event::WindowEvent) {
+        use winit::event::{ElementState, WindowEvent};
+        use winit::keyboard::PhysicalKey;
+
+        match event {
+            WindowEvent::KeyboardInput { event: key, .. } => {
+                if let PhysicalKey::Code(code) = key.physical_key {
+                    let code: KeyboardKeyCode = code.into();
+                    let down = matches!(key.state, ElementState::Pressed);
+                    self.stream.push_front(DeltaPacket::Keyboard { code, down });
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let button: MouseButtonIndex = (*button).into();
+                let down = matches!(*state, ElementState::Pressed);
+                self.stream.push_front(DeltaPacket::Mouse { button, down });
+            }
+            _ => {}
+        }
+    }
 }
 
-pub struct InputSyncIndex(AtomicU16);
-
-// bit shift tests (used vscodium 'value of literal' tooltip)
-// will remove
-const SEPARATE: u16 = (4 as u16) | (2 as u16);
-const ENCODED: u16 = (0x4u8 as u16) << 8 | 0x2u8 as u16;
-const DECODE_INNER_INDEX: u8 = (0x402 >> 8 & 0x00FF) as u8;
-const DECODE_SECTION: u8 = (0x402 & 0x00FF) as u8;
-
-impl InputSyncIndex {
-    pub fn new(inner_index: u8, section: u8) -> Self {
-        let encoded = (inner_index as u16) << 8 | section as u16;
-        Self(AtomicU16::new(encoded))
-    }
-
-    pub fn get_encoded(&self) -> u16 {
-        self.0.load(Ordering::Relaxed)
-    }
-
-    pub fn index_and_section(&self) -> (u8, u8) {
-        let encoded = self.get_encoded();
-        let inner_index = (encoded >> 8 & 0x00FF) as u8;
-        let section = (encoded & 0x00FF) as u8;
-        (inner_index, section)
-    }
-
-    //todo
+#[derive(Clone, Debug, Default)]
+pub struct InputState<const SLOTS: usize, const SECTIONS: usize> {
+    snapshot: InputSnapshot,
+    stream: Arc<InputStream<SLOTS, SECTIONS>>,
 }
 
-// todo
+impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-#[derive(Debug, Default)]
-pub struct InputState {
+    pub fn sync(&mut self) {
+        self.snapshot.keys.update();
+        self.stream.frame_back();
+    }
+
+    pub fn poll_key_events(&mut self) {
+        self.stream
+            .drain_back()
+            .for_each(|ev| self.snapshot.keys.press_change(ev));
+    }
+
+    pub fn keys(&self) -> &Keys {
+        &self.snapshot.keys
+    }
+
+    pub fn cursor(&self) -> &Cursor {
+        &self.snapshot.cursor
+    }
+
+    pub fn snapshot(&self) -> &InputSnapshot {
+        &self.snapshot
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct InputSnapshot {
     keys: Keys,
     cursor: Cursor,
 }
 
-impl InputState {
+impl InputSnapshot {
     pub fn new() -> Self {
         Self::default()
     }
@@ -98,7 +115,7 @@ impl InputState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Keys {
     keyboard: [u16; KEYBOARD_ENTRIES],
     mouse: [u16; MOUSE_ENTRIES],
@@ -135,52 +152,32 @@ impl Keys {
         }
     }
 
-    pub fn handle_key_events(&mut self, event: &winit::event::WindowEvent) {
-        use winit::event::{ElementState, WindowEvent};
-        use winit::keyboard::PhysicalKey;
-
-        match event {
-            WindowEvent::KeyboardInput { event: key, .. } => {
-                if let PhysicalKey::Code(code) = key.physical_key {
-                    let code = {
-                        let key_code: KeyboardKeyCode = code.into();
-                        u16::from(key_code)
-                    } as usize;
-
-                    match key.state {
-                        ElementState::Pressed => {
-                            if self.keyboard[code] == 0 {
-                                self.keyboard[code] = 1;
-                            }
-                        }
-                        ElementState::Released => {
-                            if self.keyboard[code] > 0 && self.keyboard[code] != RELEASE_SIGNAL {
-                                self.keyboard[code] = RELEASE_SIGNAL;
-                            }
-                        }
+    pub fn press_change(&mut self, delta: DeltaPacket) {
+        match delta {
+            DeltaPacket::Keyboard { code, down } => {
+                let code = u16::from(code) as usize;
+                if down {
+                    if self.keyboard[code] == 0 {
+                        self.keyboard[code] = 1;
+                    }
+                } else {
+                    if self.keyboard[code] > 0 && self.keyboard[code] != RELEASE_SIGNAL {
+                        self.keyboard[code] = RELEASE_SIGNAL;
                     }
                 }
             }
-            WindowEvent::MouseInput { state, button, .. } => {
-                let code = {
-                    let button_index: MouseButtonIndex = (*button).into();
-                    u16::from(button_index)
-                } as usize;
-
-                match state {
-                    ElementState::Pressed => {
-                        if self.mouse[code] == 0 {
-                            self.mouse[code] = 1;
-                        }
+            DeltaPacket::Mouse { button, down } => {
+                let code = u16::from(button) as usize;
+                if down {
+                    if self.mouse[code] == 0 {
+                        self.mouse[code] = 1;
                     }
-                    ElementState::Released => {
-                        if self.mouse[code] > 0 && self.mouse[code] != RELEASE_SIGNAL {
-                            self.mouse[code] = RELEASE_SIGNAL;
-                        }
+                } else {
+                    if self.mouse[code] > 0 && self.mouse[code] != RELEASE_SIGNAL {
+                        self.mouse[code] = RELEASE_SIGNAL;
                     }
                 }
             }
-            _ => {}
         }
     }
 
