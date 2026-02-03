@@ -12,21 +12,20 @@ const MOUSE_ENTRIES: usize = 24;
 const RELEASE_SIGNAL: u16 = 0xFFFF;
 const MAX_HOLD_FRAMES: u16 = 0xFFFF - 1;
 
+pub const SLOT_COUNT: usize = 12;
+pub const SECTION_COUNT: usize = 6;
+
 #[derive(Clone, Debug, Default)]
 pub struct InputDispatcher<const SLOTS: usize, const SECTIONS: usize> {
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
 }
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn sync(&mut self) {
         self.stream.frame_front();
     }
 
-    pub fn handle_key_events(&mut self, event: &winit::event::WindowEvent) {
+    pub fn handle_key_event(&mut self, event: &winit::event::WindowEvent) {
         use winit::event::{ElementState, WindowEvent};
         use winit::keyboard::PhysicalKey;
 
@@ -55,10 +54,6 @@ pub struct InputState<const SLOTS: usize, const SECTIONS: usize> {
 }
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn sync(&mut self) {
         self.snapshot.keys.update();
         self.stream.frame_back();

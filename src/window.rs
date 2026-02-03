@@ -200,6 +200,9 @@ where
     ) {
         match event {
             WindowEvent::RedrawRequested => {
+                #[cfg(feature = "input")]
+                self.input_dispatcher.sync();
+
                 if let Some(DisplayHandle { gl_surface, window }) = self.display.as_ref() {
                     let ctx = self.gl_ctx.as_ref().unwrap();
 
@@ -212,12 +215,11 @@ where
                 }
             }
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::MouseInput { state, button, .. } => {
-                dbg!(state, button);
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                dbg!(event);
-            }
+
+            #[cfg(feature = "input")]
+            window_ev => self.input_dispatcher.handle_key_event(&window_ev),
+
+            #[cfg(not(feature = "input"))]
             _ => {}
         }
     }

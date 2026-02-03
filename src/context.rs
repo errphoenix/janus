@@ -1,11 +1,12 @@
 use anyhow::Result;
-#[cfg(feature = "render")]
-use std::thread::JoinHandle;
 use std::time::Instant;
 use std::{ops::Deref, time::Duration};
 
+#[cfg(feature = "render")]
+use std::thread::JoinHandle;
+
 #[cfg(feature = "input")]
-use crate::input::InputState;
+use crate::input::{self, InputDispatcher as DispatchInput};
 
 /// A stateful context defines only initialization logic (which should also
 /// initialize the state) and loop logic.
@@ -35,6 +36,9 @@ pub type DumbContext = Context<EmptyRoutine, EmptyRoutine, EmptyRoutine>;
 #[cfg(not(feature = "render"))]
 pub type DumbContext = Context<EmptyRoutine, EmptyRoutine>;
 
+#[cfg(feature = "input")]
+type InputDispatcher = DispatchInput<{ input::SLOT_COUNT }, { input::SECTION_COUNT }>;
+
 /// Stores glutin's context handles and implements winit's event handling.
 ///
 /// This also makes use of 3 traits that define the application's routine:
@@ -54,6 +58,9 @@ where
     pub(crate) init: Option<Init>,
     pub state_handle: StateHandle<State>,
     pub renderer: Render,
+
+    #[cfg(feature = "input")]
+    pub(crate) input_dispatcher: InputDispatcher,
 
     logic_thread: Option<JoinHandle<()>>,
 
@@ -136,6 +143,30 @@ where
     State: Update + Default + Sync + Send + 'static,
     Render: Draw + Default,
 {
+    #[cfg(feature = "input")]
+    pub fn new(
+        init: Init,
+        input_dispatcher: InputDispatcher,
+        parameters: crate::window::DisplayParameters,
+    ) -> Self {
+        Self {
+            init: Some(init),
+            state_handle: StateHandle::Uninitialised(State::default()),
+            renderer: Default::default(),
+
+            input_dispatcher,
+
+            logic_thread: None,
+            render_delta: Default::default(),
+
+            parameters,
+            display: None,
+            gl_ctx: None,
+            gl_display: crate::window::GlDisplayState::Pending,
+        }
+    }
+
+    #[cfg(not(feature = "input"))]
     pub fn new(init: Init, parameters: crate::window::DisplayParameters) -> Self {
         Self {
             init: Some(init),
@@ -166,6 +197,8 @@ where
 
                 let mut iter = 0;
                 loop {
+                    state.new_frame();
+
                     delta.accum();
                     while delta.overstep() {
                         if iter == 0 {
@@ -177,6 +210,9 @@ where
                     if delta.step() > delta.accumulated() {
                         let ahead = delta.time_ahead();
                         std::thread::sleep(ahead * 3 / 4);
+
+                        // todo: test/bench
+                        //std::thread::yield_now();
                     }
                     iter = 0;
                 }
@@ -361,11 +397,23 @@ pub trait Update {
 
     fn set_step_duration(&mut self, step: Duration);
 
-    #[cfg(not(feature = "input"))]
     fn update(&mut self, delta: DeltaTime);
 
-    #[cfg(feature = "input")]
-    fn update(&mut self, input: &InputState, delta: DeltaTime);
+    /// Arbitrary logic to run when a new logic frame is started.
+    ///
+    /// This is guaranteed to run every frame, before the application's
+    /// [`update cycle`]. It is still called independently of whether the
+    /// [`update cycle`] runs or not due to [`delta accumulation`] conditions.
+    ///
+    /// Multiple iterations of the [`update cycle`] may occur in between
+    /// `new_frame` calls due to [`delta accumulation`] conditions.
+    ///
+    /// If using the [`input`] features, this is where you will want your
+    /// [`input frame sync`](crate::input::InputState::sync) to happen.
+    ///
+    /// [`update cycle`]: Update::update
+    /// [`delta accumulation`]: DeltaAccumulator
+    fn new_frame(&mut self) {}
 }
 
 #[cfg(feature = "render")]
