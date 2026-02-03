@@ -15,6 +15,21 @@ const MAX_HOLD_FRAMES: u16 = 0xFFFF - 1;
 pub const SLOT_COUNT: usize = 12;
 pub const SECTION_COUNT: usize = 6;
 
+pub fn stream<const SLOTS: usize, const SECTIONS: usize>() -> (
+    InputState<SLOTS, SECTIONS>,
+    InputDispatcher<SLOTS, SECTIONS>,
+) {
+    let stream = Arc::new(InputStream::new());
+
+    let state = InputState {
+        stream: Arc::clone(&stream),
+        ..Default::default()
+    };
+    let dispatcher = InputDispatcher { stream };
+
+    (state, dispatcher)
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct InputDispatcher<const SLOTS: usize, const SECTIONS: usize> {
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
