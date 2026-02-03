@@ -1,8 +1,102 @@
+use std::sync::atomic::{AtomicU8, AtomicU16, AtomicU32, AtomicU64, Ordering};
+
 const KEYBOARD_ENTRIES: usize = 512;
 const MOUSE_ENTRIES: usize = 24;
 
 const RELEASE_SIGNAL: u16 = 0xFFFF;
 const MAX_HOLD_FRAMES: u16 = 0xFFFF - 1;
+
+const INPUT_QUEUE_SECTIONS: usize = 4;
+const INPUT_QUEUE_FOLDS: usize = 8;
+const INPUT_QUEUE_FOLD_CAP: usize = size_of::<AtomicU64>() / size_of::<InputSyncPacket>();
+const INPUT_QUEUE_SECTION_CAP: usize = INPUT_QUEUE_FOLD_CAP * INPUT_QUEUE_FOLDS;
+
+#[derive(Clone, Copy, Debug)]
+pub enum InputSyncPacket {
+    Keyboard {
+        code: KeyboardKeyCode,
+        down: bool,
+    },
+    Mouse {
+        button: MouseButtonIndex,
+        down: bool,
+    },
+}
+
+pub struct InputSyncBuffer {
+    // a fold can contain 2 packets each - atomic u128 seems to not exist
+    // the index of a fold is calculated like:
+    // fold_i = floor(inner_index / 2)
+    // fold_offset = mod(inner_index, 2)
+    queue: [[AtomicU64; INPUT_QUEUE_FOLDS]; INPUT_QUEUE_SECTIONS],
+
+    head: InputSyncIndex,
+    tail: InputSyncIndex,
+    //todo
+}
+
+pub struct InputSyncIndex(AtomicU16);
+
+// bit shift tests (used vscodium 'value of literal' tooltip)
+// will remove
+const SEPARATE: u16 = (4 as u16) | (2 as u16);
+const ENCODED: u16 = (0x4u8 as u16) << 8 | 0x2u8 as u16;
+const DECODE_INNER_INDEX: u8 = (0x402 >> 8 & 0x00FF) as u8;
+const DECODE_SECTION: u8 = (0x402 & 0x00FF) as u8;
+
+impl InputSyncIndex {
+    pub fn new(inner_index: u8, section: u8) -> Self {
+        let encoded = (inner_index as u16) << 8 | section as u16;
+        Self(AtomicU16::new(encoded))
+    }
+
+    pub fn get_encoded(&self) -> u16 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    pub fn index_and_section(&self) -> (u8, u8) {
+        let encoded = self.get_encoded();
+        let inner_index = (encoded >> 8 & 0x00FF) as u8;
+        let section = (encoded & 0x00FF) as u8;
+        (inner_index, section)
+    }
+
+    //todo
+}
+
+// todo
+
+#[derive(Debug, Default)]
+pub struct InputState {
+    keys: Keys,
+    cursor: Cursor,
+}
+
+impl InputState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn keys(&self) -> &Keys {
+        &self.keys
+    }
+
+    pub fn cursor(&self) -> &Cursor {
+        &self.cursor
+    }
+
+    pub fn keys_mut(&mut self) -> &mut Keys {
+        &mut self.keys
+    }
+
+    pub fn cursor_mut(&mut self) -> &mut Cursor {
+        &mut self.cursor
+    }
+
+    pub fn disjoint_mut(&mut self) -> (&mut Keys, &mut Cursor) {
+        (&mut self.keys, &mut self.cursor)
+    }
+}
 
 #[derive(Debug)]
 pub struct Keys {
@@ -48,19 +142,20 @@ impl Keys {
         match event {
             WindowEvent::KeyboardInput { event: key, .. } => {
                 if let PhysicalKey::Code(code) = key.physical_key {
-                    let code = code as usize;
-                    if code < KEYBOARD_ENTRIES {
-                        match key.state {
-                            ElementState::Pressed => {
-                                if self.keyboard[code] == 0 {
-                                    self.keyboard[code] = 1;
-                                }
+                    let code = {
+                        let key_code: KeyboardKeyCode = code.into();
+                        u16::from(key_code)
+                    } as usize;
+
+                    match key.state {
+                        ElementState::Pressed => {
+                            if self.keyboard[code] == 0 {
+                                self.keyboard[code] = 1;
                             }
-                            ElementState::Released => {
-                                if self.keyboard[code] > 0 && self.keyboard[code] != RELEASE_SIGNAL
-                                {
-                                    self.keyboard[code] = RELEASE_SIGNAL;
-                                }
+                        }
+                        ElementState::Released => {
+                            if self.keyboard[code] > 0 && self.keyboard[code] != RELEASE_SIGNAL {
+                                self.keyboard[code] = RELEASE_SIGNAL;
                             }
                         }
                     }
@@ -69,8 +164,8 @@ impl Keys {
             WindowEvent::MouseInput { state, button, .. } => {
                 let code = {
                     let button_index: MouseButtonIndex = (*button).into();
-                    usize::from(button_index)
-                };
+                    u16::from(button_index)
+                } as usize;
 
                 match state {
                     ElementState::Pressed => {
@@ -118,10 +213,10 @@ impl Keys {
     pub fn mouse_frames(&self, code: winit::event::MouseButton) -> u16 {
         let code = {
             let button_index: MouseButtonIndex = code.into();
-            usize::from(button_index)
+            u16::from(button_index)
         };
 
-        self.mouse[code]
+        self.mouse[code as usize]
     }
 
     #[inline(always)]
@@ -146,19 +241,35 @@ impl Keys {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct MouseButtonIndex(usize);
+struct KeyboardKeyCode(u16);
 
-impl MouseButtonIndex {
-    const LEFT: usize = 0;
-    const RIGHT: usize = 1;
-    const MIDDLE: usize = 2;
-    const BACK: usize = 3;
-    const FORWARD: usize = 4;
-
-    const OTHER_OFFSET: usize = 5;
+impl From<KeyboardKeyCode> for u16 {
+    #[inline(always)]
+    fn from(value: KeyboardKeyCode) -> Self {
+        value.0
+    }
 }
 
-impl From<MouseButtonIndex> for usize {
+impl From<winit::keyboard::KeyCode> for KeyboardKeyCode {
+    fn from(value: winit::keyboard::KeyCode) -> Self {
+        Self((value as u16).min(KEYBOARD_ENTRIES as u16 - 1))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct MouseButtonIndex(u16);
+
+impl MouseButtonIndex {
+    const LEFT: u16 = 0;
+    const RIGHT: u16 = 1;
+    const MIDDLE: u16 = 2;
+    const BACK: u16 = 3;
+    const FORWARD: u16 = 4;
+
+    const OTHER_OFFSET: u16 = 5;
+}
+
+impl From<MouseButtonIndex> for u16 {
     #[inline(always)]
     fn from(value: MouseButtonIndex) -> Self {
         value.0
@@ -175,7 +286,7 @@ impl From<winit::event::MouseButton> for MouseButtonIndex {
             winit::event::MouseButton::Back => Self(Self::FORWARD),
             winit::event::MouseButton::Forward => Self(Self::BACK),
             winit::event::MouseButton::Other(id) => {
-                Self((id as usize + Self::OTHER_OFFSET).min(MOUSE_ENTRIES - 1))
+                Self((id as u16 + Self::OTHER_OFFSET).min(MOUSE_ENTRIES as u16 - 1))
             }
         }
     }
