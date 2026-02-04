@@ -126,12 +126,12 @@ impl<const FOLDS: usize, const SECTIONS: usize> InputStream<FOLDS, SECTIONS> {
     }
 
     pub fn push_front(&self, packet: DeltaPacket) {
-        let (local, section) = self.head.advance_local();
-        let section = &self.stream[section as usize];
+        let (local, section_i) = self.head.advance_local();
+        let section = &self.stream[section_i as usize];
 
-        let fold = local as usize / 2;
+        let fold_i = local as usize / 2;
         let side = local as usize % 2;
-        let fold = &section[fold];
+        let fold = &section[fold_i];
 
         if side == 0 {
             fold.write_left(packet);
@@ -178,10 +178,10 @@ impl<'stream, const FOLDS: usize, const SECTIONS: usize> Iterator
     fn next(&mut self) -> Option<Self::Item> {
         let (local, _) = self.index.advance_local();
 
-        let fold = local as usize / 2;
+        let fold_i = local as usize / 2;
         let side = local as usize % 2;
 
-        let fold = &self.stream[fold];
+        let fold = &self.stream[fold_i];
 
         if side == 0 {
             fold.read_left()
@@ -213,23 +213,27 @@ impl<const FOLDS: usize, const SECTIONS: usize> InputStreamIndex<FOLDS, SECTIONS
     /// exceeds the section's capacity.
     ///
     /// # Returns
-    /// The previous local index with the current section unchanged.
+    /// The previous local index first with the current section unchanged.
     pub fn advance_local(&self) -> (u8, u8) {
-        let (i, section) = self.extract();
+        let (section, old_i) = self.extract();
 
         // wrap around whole section if capacity of next index exceeds capacity
-        let i = (i + 1) % Self::SECTION_CAPACITY as u8;
+        let i = (old_i + 1) % Self::SECTION_CAPACITY as u8;
         self.encode(i, section);
-        (i, section)
+        (old_i, section)
     }
 
     /// Advance to the beginning of the next buffer section.
-    pub fn advance_section(&self) {
-        let (_, section) = self.extract();
+    ///
+    /// # Returns
+    /// The new section it has advanced to.
+    pub fn advance_section(&self) -> u8 {
+        let (section, _) = self.extract();
 
         // wrap around to first section after all have been exhausted
         let section = (section + 1) % SECTIONS as u8;
         self.encode(0, section);
+        section
     }
 
     fn encode(&self, index: u8, section: u8) {
@@ -272,18 +276,31 @@ impl FoldBits {
         (left, right)
     }
 
+    #[inline(always)]
     pub fn write_left(&self, packet: DeltaPacket) {
         let bits: u32 = packet.into();
+        self.write_left_bits(bits);
+    }
+
+    #[inline(always)]
+    pub fn write_right(&self, packet: DeltaPacket) {
+        let bits: u32 = packet.into();
+        self.write_right_bits(bits);
+    }
+
+    #[inline(always)]
+    pub fn write_left_bits(&self, bits: u32) {
         self.0.store((bits as u64) << 32, Ordering::Release);
     }
 
-    pub fn write_right(&self, packet: DeltaPacket) {
-        let bits: u32 = packet.into();
-        self.0.fetch_and(bits as u64, Ordering::Acquire);
+    #[inline(always)]
+    pub fn write_right_bits(&self, bits: u32) {
+        self.0.fetch_or(bits as u64, Ordering::AcqRel);
     }
 
     pub fn read_left(&self) -> Option<DeltaPacket> {
         let (left, _) = self.read_bits();
+        self.write_left_bits(0);
 
         if left == 0 {
             return None;
@@ -293,6 +310,7 @@ impl FoldBits {
 
     pub fn read_right(&self) -> Option<DeltaPacket> {
         let (_, right) = self.read_bits();
+        self.write_right_bits(0);
 
         if right == 0 {
             return None;

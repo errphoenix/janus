@@ -3,6 +3,8 @@ pub mod stream;
 use std::sync::Arc;
 
 pub use stream::{DeltaPacket, IterInputStream};
+pub use winit::event::MouseButton;
+pub use winit::keyboard::KeyCode;
 
 use crate::input::stream::InputStream;
 
@@ -198,7 +200,8 @@ impl Keys {
 
     #[inline(always)]
     pub fn key_down(&self, code: winit::keyboard::KeyCode) -> bool {
-        self.key_frames(code) != 0
+        let frames = self.key_frames(code);
+        frames != 0 && frames != RELEASE_SIGNAL
     }
 
     #[inline(always)]
@@ -217,18 +220,30 @@ impl Keys {
     }
 
     #[inline(always)]
-    pub fn mouse_frames(&self, code: winit::event::MouseButton) -> u16 {
-        let code = {
-            let button_index: MouseButtonIndex = code.into();
-            u16::from(button_index)
-        };
+    fn mouse_code(&self, code: impl Into<MouseButtonIndex>) -> u16 {
+        let button_index: MouseButtonIndex = code.into();
+        u16::from(button_index)
+    }
 
+    #[inline(always)]
+    fn mouse_frames(&self, code: winit::event::MouseButton) -> u16 {
+        let code = self.mouse_code(code);
         self.mouse[code as usize]
     }
 
     #[inline(always)]
+    pub fn mouse_frames_held(&self, code: winit::event::MouseButton) -> u16 {
+        let frames = self.mouse_frames(code);
+        if frames == RELEASE_SIGNAL {
+            return 0;
+        }
+        frames
+    }
+
+    #[inline(always)]
     pub fn mouse_down(&self, code: winit::event::MouseButton) -> bool {
-        self.mouse_frames(code) != 0
+        let frames = self.mouse_frames(code);
+        frames != 0 && frames != RELEASE_SIGNAL
     }
 
     #[inline(always)]
@@ -242,8 +257,8 @@ impl Keys {
     }
 
     #[inline(always)]
-    pub fn mouse_held(&self, code: winit::event::MouseButton) -> bool {
-        self.mouse_frames(code) > 1
+    pub fn mouse_held(&self, code: winit::event::MouseButton, frame_delay: u16) -> bool {
+        self.mouse_frames_held(code) > frame_delay
     }
 }
 
