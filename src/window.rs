@@ -10,7 +10,9 @@ use glutin::{
 use glutin_winit::{DisplayBuilder, GlWindow};
 use tracing::{Level, event};
 use winit::{
-    application::ApplicationHandler, event::WindowEvent, raw_window_handle::HasWindowHandle,
+    application::ApplicationHandler,
+    event::{StartCause, WindowEvent},
+    raw_window_handle::HasWindowHandle,
     window::Window,
 };
 
@@ -192,6 +194,17 @@ where
         }
     }
 
+    #[cfg(feature = "input")]
+    fn new_events(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        cause: winit::event::StartCause,
+    ) {
+        if cause == StartCause::Poll {
+            self.input_dispatcher.sync();
+        }
+    }
+
     fn window_event(
         &mut self,
         event_loop: &winit::event_loop::ActiveEventLoop,
@@ -200,9 +213,6 @@ where
     ) {
         match event {
             WindowEvent::RedrawRequested => {
-                #[cfg(feature = "input")]
-                self.input_dispatcher.sync();
-
                 if let Some(DisplayHandle { gl_surface, window }) = self.display.as_ref() {
                     let ctx = self.gl_ctx.as_ref().unwrap();
 
