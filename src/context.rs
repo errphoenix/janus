@@ -1,6 +1,5 @@
-use anyhow::Result;
-use std::time::Instant;
-use std::{ops::Deref, time::Duration};
+use std::ops::Deref;
+use std::time::{Duration, Instant};
 
 #[cfg(feature = "render")]
 use std::thread::JoinHandle;
@@ -376,7 +375,7 @@ pub trait Setup<State>
 where
     State: Update + Default,
 {
-    fn init(self, state: &mut State) -> Result<()>
+    fn init(self, state: &mut State) -> Result<(), &'static str>
     where
         Self: Sized;
 }
@@ -387,7 +386,7 @@ where
     State: Update + Default,
     Render: Draw + Default,
 {
-    fn init(self, state: &mut State, renderer: &mut Render) -> Result<()>
+    fn init(self, state: &mut State, renderer: &mut Render) -> Result<(), &'static str>
     where
         Self: Sized;
 }
@@ -430,7 +429,7 @@ where
     State: Update + Default,
     Render: Draw + Default,
 {
-    fn init(self, _: &mut State, _: &mut Render) -> Result<()>
+    fn init(self, _: &mut State, _: &mut Render) -> Result<(), &'static str>
     where
         Self: Sized,
     {
@@ -458,9 +457,9 @@ impl<State, Render, F> Setup<State, Render> for F
 where
     State: Update + Default,
     Render: Draw + Default,
-    F: FnOnce(&mut State, &mut Render) -> Result<()>,
+    F: FnOnce(&mut State, &mut Render) -> Result<(), &'static str>,
 {
-    fn init(self, state: &mut State, renderer: &mut Render) -> Result<()>
+    fn init(self, state: &mut State, renderer: &mut Render) -> Result<(), &'static str>
     where
         Self: Sized,
     {
@@ -472,9 +471,9 @@ where
 impl<State, F> Setup<State> for F
 where
     State: Update + Default,
-    F: FnOnce(&mut State) -> Result<()>,
+    F: FnOnce(&mut State) -> Result<(), &'static str>,
 {
-    fn init(self, state: &mut State) -> Result<()>
+    fn init(self, state: &mut State) -> Result<(), &'static str>
     where
         Self: Sized,
     {
@@ -487,7 +486,7 @@ impl<State> Setup<State> for EmptyRoutine
 where
     State: Update + Default,
 {
-    fn init(self, _: &mut State) -> Result<()>
+    fn init(self, _: &mut State) -> Result<(), &'static str>
     where
         Self: Sized,
     {
