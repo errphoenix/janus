@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
 use crate::input::{KeyboardKeyCode, MouseButtonIndex};
 
 #[repr(u32)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum DeltaPacket {
     Keyboard {
         code: KeyboardKeyCode,
@@ -105,13 +105,16 @@ impl<const FOLDS: usize, const SECTIONS: usize> InputStream<FOLDS, SECTIONS> {
         let queue = { core::array::from_fn(|_| core::array::from_fn(|_| FoldBits::new(0))) };
         Self {
             stream: queue,
-            head: InputStreamIndex::new(0, 1),
+            head: InputStreamIndex::new(0, 0),
             tail: InputStreamIndex::new(0, 0),
         }
     }
 
     pub fn frame_front(&self) {
-        self.head.advance_section();
+        let section = self.head.advance_section();
+        if section == self.tail.section() {
+            self.head.advance_section();
+        }
     }
 
     pub fn frame_back(&self) {
@@ -295,5 +298,60 @@ impl FoldBits {
             return None;
         }
         Some(DeltaPacket::from_bits(right))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fold_encode_decode() {
+        let fold = FoldBits::new(0);
+
+        let (l, r) = fold.read_bits();
+        assert_eq!(l, 0);
+        assert_eq!(r, 0);
+
+        let kb_ev = DeltaPacket::Keyboard {
+            code: KeyboardKeyCode(67),
+            down: true,
+        };
+        let mouse_ev = DeltaPacket::Mouse {
+            button: MouseButtonIndex(1),
+            down: false,
+        };
+
+        fold.write_right(kb_ev);
+        let r = fold.read_right();
+        let l = fold.read_left();
+        assert_eq!(l, None);
+        assert_eq!(r, Some(kb_ev));
+
+        fold.write_left(mouse_ev);
+        let r = fold.read_right();
+        let l = fold.read_left();
+        assert_eq!(r, None);
+        assert_eq!(l, Some(mouse_ev));
+
+        let fold = FoldBits::new(0);
+
+        fold.write_left(kb_ev);
+        let r = fold.read_right();
+        let l = fold.read_left();
+        assert_eq!(r, None);
+        assert_eq!(l, Some(kb_ev));
+
+        fold.write_right(mouse_ev);
+        let r = fold.read_right();
+        let l = fold.read_left();
+        assert_eq!(r, Some(mouse_ev));
+        assert_eq!(l, Some(kb_ev));
+
+        fold.write_left(mouse_ev);
+        let l = fold.read_left();
+        let r = fold.read_right();
+        assert_eq!(l, Some(mouse_ev));
+        assert_eq!(r, None);
     }
 }

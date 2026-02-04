@@ -248,7 +248,7 @@ impl Keys {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct KeyboardKeyCode(u16);
+pub struct KeyboardKeyCode(u16);
 
 impl From<KeyboardKeyCode> for u16 {
     #[inline(always)]
@@ -264,7 +264,7 @@ impl From<winit::keyboard::KeyCode> for KeyboardKeyCode {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct MouseButtonIndex(u16);
+pub struct MouseButtonIndex(u16);
 
 impl MouseButtonIndex {
     const LEFT: u16 = 0;
