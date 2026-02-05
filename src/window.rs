@@ -225,6 +225,11 @@ where
                 }
             }
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::Resized(size) => {
+                let x = size.width as f32;
+                let y = size.height as f32;
+                self.renderer.set_resolution((x, y));
+            }
 
             #[cfg(feature = "input")]
             window_ev => self.input_dispatcher.handle_key_event(&window_ev),

@@ -417,6 +417,8 @@ pub trait Update {
 
 #[cfg(feature = "render")]
 pub trait Draw {
+    fn set_resolution(&mut self, resolution: (f32, f32));
+
     fn draw(&mut self, delta: DeltaTime);
 }
 
@@ -450,6 +452,8 @@ impl Update for EmptyRoutine {
 #[cfg(feature = "render")]
 impl Draw for EmptyRoutine {
     fn draw(&mut self, _: DeltaTime) {}
+
+    fn set_resolution(&mut self, _: (f32, f32)) {}
 }
 
 #[cfg(feature = "render")]
