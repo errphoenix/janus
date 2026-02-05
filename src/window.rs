@@ -226,6 +226,15 @@ where
             }
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
+                if let Some(DisplayHandle { gl_surface, .. }) = self.display.as_ref() {
+                    let ctx = self.gl_ctx.as_ref().unwrap();
+                    gl_surface.resize(
+                        ctx,
+                        NonZeroU32::new(size.width).unwrap(),
+                        NonZeroU32::new(size.height).unwrap(),
+                    );
+                }
+
                 let x = size.width as f32;
                 let y = size.height as f32;
                 self.renderer.set_resolution((x, y));
