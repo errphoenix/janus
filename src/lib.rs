@@ -10,6 +10,8 @@ pub mod texture;
 #[cfg(feature = "render")]
 pub mod window;
 
+pub mod sync;
+
 #[cfg(all(feature = "render", feature = "state"))]
 pub fn run<Init, State, Render>(mut context: Context<Init, State, Render>)
 where

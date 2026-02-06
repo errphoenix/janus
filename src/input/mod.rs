@@ -339,7 +339,7 @@ impl Cursor {
         }
     }
 
-    pub fn handle_cursor_device_events(&mut self, event: &winit::event::DeviceEvent) {
+    pub fn handle_raw_cursor_events(&mut self, event: &winit::event::DeviceEvent) {
         match event {
             winit::event::DeviceEvent::MouseMotion { delta } => {
                 self.delta = *delta;
