@@ -66,8 +66,11 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS>
 
     pub fn handle_raw_cursor_events(&mut self, event: &winit::event::DeviceEvent) {
         match event {
-            winit::event::DeviceEvent::MouseMotion { delta } => {
-                self.cursor_delta.publish(*delta);
+            winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } => {
+                self.cursor_delta.publish_with(|(o_dx, o_dy)| {
+                    *o_dx += *dx;
+                    *o_dy += *dy;
+                });
             }
             _ => {}
         }

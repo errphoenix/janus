@@ -51,10 +51,48 @@ impl<T: Clone + Send + Sync> Mirror<T> {
         }
     }
 
+    /// Mutate the inner value with an `operation ` and publish it.
+    ///
+    /// This is functionally identical to [`Mirror::publish`].
+    ///
+    /// This function allows you capture the current cached value and modify
+    /// it, then it will be published.
+    ///
+    /// Note that the `operation` is called before blocking for the read/write
+    /// signal.
+    /// Thus, this is no different from manually getting the cached value,
+    /// mutating it, and then publishing it; this function is merely for
+    /// convenience.
+    ///
+    /// More importantly, this means the caller still holds the responsability
+    /// to synchronise if changes from other Mirrors may be expected.
+    pub fn publish_with<F: FnOnce(&mut T)>(&mut self, operation: F) {
+        operation(&mut self.local);
+
+        while self
+            .rw_signal
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            std::thread::yield_now();
+        }
+
+        // SAFETY: we ensure the underlying pointer is unused by
+        //         spinlocking for the state of the shared rw_signal.
+        //         At the same time, we lock the signal again to avoid
+        //         writes or other sync operations during our operation.
+        unsafe {
+            std::ptr::copy_nonoverlapping(&self.local as *const T, *self.ptr, 1);
+        }
+
+        self.rw_signal.store(false, Ordering::Release);
+        self.version = self.latest.fetch_add(1, Ordering::Release) + 1;
+    }
+
     /// Publish a new `value` to the shared data.
     ///
-    /// This operation blocks if the data is currently being synchronised by
-    /// other [`Mirror`] instances.
+    /// This operation blocks if the data is currently being synchronised by or
+    /// published other [`Mirror`] instances.
     ///
     /// Nonetheless, synchronisation is a very small operation; thus you can
     /// expect the block to be very short in most cases.
