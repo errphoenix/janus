@@ -1,4 +1,5 @@
 use std::{
+    ops::Deref,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -107,6 +108,11 @@ impl<T: Clone> Mirror<T> {
     /// synchronisation is really not crucial.
     ///
     /// In most cases, prefer the standard [`sync`](Mirror::sync).
+    ///
+    /// # Returns
+    /// If the read/write lock is currently on, a [`SyncError::Locked`] is
+    /// returned.
+    /// Otherwise, [`Ok`] is returned.
     pub fn sync_noblock(&mut self) -> SyncResult {
         let latest_version = self.latest.load(Ordering::Acquire);
         if self.version < latest_version {
@@ -144,6 +150,9 @@ impl<T: Clone> Mirror<T> {
     ///
     /// This is a read operation during which the shared signal will be locked
     /// for its duration, forbidding other sync operations.
+    ///
+    /// # Returns
+    /// This operation cannot fail. An [`Ok`] is always returned.
     pub fn sync(&mut self) -> SyncResult {
         let latest_version = self.latest.load(Ordering::Acquire);
         if self.version < latest_version {
@@ -181,6 +190,12 @@ impl<T: Clone> Mirror<T> {
     ///
     /// This is a read operation during which the shared signal will be locked
     /// for its duration, forbidding other sync operations.
+    ///
+    /// # Returns
+    /// If the read/write lock is not unlocked within the `timeout`, a
+    /// [`SyncError::TimeoutExceeded`] containing the total waiting time (in
+    /// nanos) is returned.
+    /// Otherwise, [`Ok`] is returned.
     pub fn sync_timeout(&mut self, timeout: Duration) -> SyncResult {
         let start = Instant::now();
         let latest_version = self.latest.load(Ordering::Acquire);
@@ -228,5 +243,13 @@ impl<T: Clone> Drop for Mirror<T> {
         if Arc::strong_count(&self.ptr) == 1 {
             let _v = unsafe { Box::from_raw(*self.ptr) };
         }
+    }
+}
+
+impl<T: Clone> Deref for Mirror<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.local
     }
 }
