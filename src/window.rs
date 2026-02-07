@@ -241,11 +241,24 @@ where
             }
 
             #[cfg(feature = "input")]
-            window_ev => self.input_dispatcher.handle_key_event(&window_ev),
+            window_ev => {
+                self.input_dispatcher.handle_cursor_events(&window_ev);
+                self.input_dispatcher.handle_key_event(&window_ev);
+            }
 
             #[cfg(not(feature = "input"))]
             _ => {}
         }
+    }
+
+    #[cfg(feature = "input")]
+    fn device_event(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        _device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        self.input_dispatcher.handle_raw_cursor_events(&event);
     }
 
     fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {

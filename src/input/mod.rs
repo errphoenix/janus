@@ -7,6 +7,7 @@ pub use winit::event::MouseButton;
 pub use winit::keyboard::KeyCode;
 
 use crate::input::stream::InputStream;
+use crate::sync;
 
 const KEYBOARD_ENTRIES: usize = 512;
 const MOUSE_ENTRIES: usize = 24;
@@ -27,7 +28,15 @@ pub fn stream<const SLOTS: usize, const SECTIONS: usize>() -> (
         stream: Arc::clone(&stream),
         ..Default::default()
     };
-    let dispatcher = InputDispatcher { stream };
+
+    // clones local value and shared arc data used to sync
+    let cursor_abs = state.snapshot.cursor.current.clone();
+    let cursor_delta = state.snapshot.cursor.delta.clone();
+    let dispatcher = InputDispatcher {
+        stream,
+        cursor_abs,
+        cursor_delta,
+    };
 
     (state, dispatcher)
 }
@@ -35,11 +44,32 @@ pub fn stream<const SLOTS: usize, const SECTIONS: usize>() -> (
 #[derive(Clone, Debug, Default)]
 pub struct InputDispatcher<const SLOTS: usize, const SECTIONS: usize> {
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
+
+    cursor_delta: sync::Mirror<(f64, f64)>,
+    cursor_abs: sync::Mirror<(f64, f64)>,
 }
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS> {
     pub fn sync(&mut self) {
         self.stream.frame_front();
+    }
+
+    pub fn handle_cursor_events(&mut self, event: &winit::event::WindowEvent) {
+        match event {
+            winit::event::WindowEvent::CursorMoved { position, .. } => {
+                self.cursor_abs.publish((position.x, position.y));
+            }
+            _ => {}
+        }
+    }
+
+    pub fn handle_raw_cursor_events(&mut self, event: &winit::event::DeviceEvent) {
+        match event {
+            winit::event::DeviceEvent::MouseMotion { delta } => {
+                self.cursor_delta.publish(*delta);
+            }
+            _ => {}
+        }
     }
 
     pub fn handle_key_event(&mut self, event: &winit::event::WindowEvent) {
@@ -72,6 +102,7 @@ pub struct InputState<const SLOTS: usize, const SECTIONS: usize> {
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
     pub fn sync(&mut self) {
+        self.snapshot.cursor.sync();
         self.snapshot.keys.update();
         self.stream.frame_back();
     }
@@ -102,10 +133,6 @@ pub struct InputSnapshot {
 }
 
 impl InputSnapshot {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     pub fn keys(&self) -> &Keys {
         &self.keys
     }
@@ -314,10 +341,10 @@ impl From<winit::event::MouseButton> for MouseButtonIndex {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Default)]
 pub struct Cursor {
-    current: (f64, f64),
-    delta: (f64, f64),
+    current: sync::Mirror<(f64, f64)>,
+    delta: sync::Mirror<(f64, f64)>,
 }
 
 impl Cursor {
@@ -325,32 +352,19 @@ impl Cursor {
         Self::default()
     }
 
+    pub fn sync(&mut self) {
+        self.current.sync();
+        self.delta.sync();
+    }
+
     #[inline(always)]
     pub fn update(&mut self) {
         self.delta = Default::default();
     }
 
-    pub fn handle_cursor_events(&mut self, event: &winit::event::WindowEvent) {
-        match event {
-            winit::event::WindowEvent::CursorMoved { position, .. } => {
-                self.current = (position.x, position.y);
-            }
-            _ => {}
-        }
-    }
-
-    pub fn handle_raw_cursor_events(&mut self, event: &winit::event::DeviceEvent) {
-        match event {
-            winit::event::DeviceEvent::MouseMotion { delta } => {
-                self.delta = *delta;
-            }
-            _ => {}
-        }
-    }
-
     #[inline(always)]
     pub fn current(&self) -> (f64, f64) {
-        self.current
+        *self.current
     }
 
     #[inline(always)]
@@ -360,7 +374,7 @@ impl Cursor {
 
     #[inline(always)]
     pub fn delta(&self) -> (f64, f64) {
-        self.delta
+        *self.delta
     }
 
     #[inline(always)]
