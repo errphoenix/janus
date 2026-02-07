@@ -16,7 +16,7 @@ pub enum SyncError {
 pub type SyncResult = Result<(), SyncError>;
 
 #[derive(Debug, Clone)]
-pub struct Mirror<T: Clone> {
+pub struct Mirror<T: Clone + Send + Sync> {
     local: T,
     version: usize,
 
@@ -28,13 +28,13 @@ pub struct Mirror<T: Clone> {
     rw_signal: Arc<AtomicBool>,
 }
 
-impl<T: Default + Clone> Default for Mirror<T> {
+impl<T: Default + Clone + Send + Sync> Default for Mirror<T> {
     fn default() -> Self {
         Self::new(T::default())
     }
 }
 
-impl<T: Clone> Mirror<T> {
+impl<T: Clone + Send + Sync> Mirror<T> {
     pub fn new(value: T) -> Self {
         let local = value.clone();
         let latest = Arc::new(AtomicUsize::new(0));
@@ -236,7 +236,7 @@ impl<T: Clone> Mirror<T> {
     }
 }
 
-impl<T: Clone> Drop for Mirror<T> {
+impl<T: Clone + Send + Sync> Drop for Mirror<T> {
     fn drop(&mut self) {
         // only one left, we drop the data behind the shared pointer to
         // avoid memory leaks
@@ -246,10 +246,13 @@ impl<T: Clone> Drop for Mirror<T> {
     }
 }
 
-impl<T: Clone> Deref for Mirror<T> {
+impl<T: Clone + Send + Sync> Deref for Mirror<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
         &self.local
     }
 }
+
+unsafe impl<T: Clone + Sync + Send> Sync for Mirror<T> {}
+unsafe impl<T: Clone + Send + Sync> Send for Mirror<T> {}
