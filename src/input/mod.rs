@@ -52,6 +52,7 @@ pub struct InputDispatcher<const SLOTS: usize, const SECTIONS: usize> {
 impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS> {
     pub fn sync(&mut self) {
         self.stream.frame_front();
+        self.cursor_delta.publish((0.0, 0.0));
     }
 
     pub fn handle_cursor_events(&mut self, event: &winit::event::WindowEvent) {
@@ -353,8 +354,8 @@ impl Cursor {
     }
 
     pub fn sync(&mut self) {
-        self.current.sync();
-        self.delta.sync();
+        let _ = self.current.sync();
+        let _ = self.delta.sync();
     }
 
     #[inline(always)]
