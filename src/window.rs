@@ -242,7 +242,7 @@ where
 
             #[cfg(feature = "input")]
             window_ev => {
-                self.input_dispatcher.handle_cursor_events(&window_ev);
+                self.input_dispatcher.handle_mouse_events(&window_ev);
                 self.input_dispatcher.handle_key_event(&window_ev);
             }
 

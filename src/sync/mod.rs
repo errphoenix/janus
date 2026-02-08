@@ -268,7 +268,9 @@ impl<T: Clone + Send + Sync> Mirror<T> {
 
     /// Returns the local variable.
     ///
-    /// This may not be synchronised.
+    /// This does not directly ensure the value has been synchronised.
+    ///
+    /// You may want to do so by explicitly calling any of the sync functions.
     pub fn get(&self) -> &T {
         &self.local
     }
