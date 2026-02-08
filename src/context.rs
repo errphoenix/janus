@@ -394,8 +394,6 @@ where
 pub trait Update {
     fn step_duration(&self) -> Duration;
 
-    fn set_step_duration(&mut self, step: Duration);
-
     fn update(&mut self, delta: DeltaTime);
 
     /// Arbitrary logic to run when a new logic frame is started.
@@ -445,8 +443,6 @@ impl Update for EmptyRoutine {
     fn step_duration(&self) -> Duration {
         Duration::default()
     }
-
-    fn set_step_duration(&mut self, _: Duration) {}
 }
 
 #[cfg(feature = "render")]
