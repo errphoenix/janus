@@ -6,6 +6,8 @@ use std::thread::JoinHandle;
 
 #[cfg(feature = "input")]
 use crate::input::{self, InputDispatcher as DispatchInput};
+#[cfg(feature = "render")]
+use crate::sync;
 
 /// A stateful context defines only initialization logic (which should also
 /// initialize the state) and loop logic.
@@ -61,17 +63,14 @@ where
     #[cfg(feature = "input")]
     pub(crate) input_dispatcher: InputDispatcher,
 
+    cursor_grab: sync::Mirror<bool>,
     logic_thread: Option<JoinHandle<()>>,
 
     pub(crate) render_delta: DeltaCycle,
 
-    #[cfg(feature = "render")]
     pub(crate) parameters: crate::window::DisplayParameters,
-    #[cfg(feature = "render")]
     pub(crate) display: Option<crate::window::DisplayHandle>,
-    #[cfg(feature = "render")]
     pub(crate) gl_ctx: Option<glutin::context::PossiblyCurrentContext>,
-    #[cfg(feature = "render")]
     pub(crate) gl_display: crate::window::GlDisplayState,
 }
 
@@ -155,7 +154,9 @@ where
 
             input_dispatcher,
 
+            cursor_grab: sync::Mirror::new(false),
             logic_thread: None,
+
             render_delta: Default::default(),
 
             parameters,
@@ -180,6 +181,41 @@ where
             gl_ctx: None,
             gl_display: crate::window::GlDisplayState::Pending,
         }
+    }
+
+    pub fn cursor_grab_state(&self) -> &sync::Mirror<bool> {
+        &self.cursor_grab
+    }
+
+    pub(crate) fn sync_cursor_mode(&mut self) {
+        if self.cursor_grab.check_sync_status() {
+            let _ = self.cursor_grab.sync();
+            let grabbed = *self.cursor_grab.get();
+            self.set_cursor_grabbed(grabbed);
+        }
+    }
+
+    /// Set whether the cursor mode should be set to `grabbed`.
+    ///
+    /// # Panics
+    /// Will panic if the [`Context`]'s [`DisplayHandle`] has not yet
+    /// initialised; i.e. the window is still not finished.
+    pub fn set_cursor_grabbed(&self, grabbed: bool) {
+        use winit::window::CursorGrabMode;
+
+        let dh = self
+            .display
+            .as_ref()
+            .expect("DisplayHandle/Window must be initialised");
+
+        if grabbed {
+            let _ = dh
+                .window()
+                .set_cursor_grab(CursorGrabMode::Confined)
+                .or_else(|_| dh.window().set_cursor_grab(CursorGrabMode::Locked));
+        } else {
+            let _ = dh.window().set_cursor_grab(CursorGrabMode::None);
+        };
     }
 
     pub(crate) fn initialise_thread(&mut self) {

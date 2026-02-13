@@ -7,8 +7,7 @@ pub use winit::event::MouseButton;
 use winit::event::MouseScrollDelta;
 pub use winit::keyboard::KeyCode;
 
-use crate::input::stream::InputStream;
-use crate::sync::{self, Mirror};
+use crate::{input::stream::InputStream, sync};
 
 const KEYBOARD_ENTRIES: usize = 512;
 const MOUSE_ENTRIES: usize = 24;
