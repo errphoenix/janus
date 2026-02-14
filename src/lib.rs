@@ -59,3 +59,11 @@ pub trait GlProperty {
 pub trait GpuResource {
     fn resource_id(&self) -> u32;
 }
+
+#[inline(always)]
+pub fn is_wayland() -> bool {
+    match option_env!("WAYLAND") {
+        Some(env) => i32::from_str_radix(env, 2).unwrap_or(0) == 1,
+        None => false,
+    }
+}

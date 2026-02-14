@@ -130,7 +130,7 @@ impl<T: Clone + Send + Sync> Mirror<T> {
         self.local = value;
     }
 
-    /// Checks whether the [`Mirror`] is out of sync.
+    /// Checks whether the [`Mirror`] is up-to-date with the other accessors.
     pub fn check_sync_status(&self) -> bool {
         let latest_version = self.latest.load(Ordering::Acquire);
         self.version == latest_version

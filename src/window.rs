@@ -201,7 +201,9 @@ where
         cause: winit::event::StartCause,
     ) {
         if cause == StartCause::Poll {
-            self.sync_cursor_mode();
+            #[cfg(feature = "input")]
+            self.sync_cursor_options();
+
             self.input_dispatcher.sync();
         }
     }

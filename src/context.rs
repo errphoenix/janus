@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 #[cfg(feature = "render")]
 use std::thread::JoinHandle;
 
+#[cfg(feature = "render")]
+use winit::dpi::{LogicalPosition, PhysicalPosition};
+
 #[cfg(feature = "input")]
 use crate::input::{self, InputDispatcher as DispatchInput};
 #[cfg(feature = "render")]
@@ -62,11 +65,9 @@ where
 
     #[cfg(feature = "input")]
     pub(crate) input_dispatcher: InputDispatcher,
-
-    cursor_grab: sync::Mirror<bool>,
-    logic_thread: Option<JoinHandle<()>>,
-
     pub(crate) render_delta: DeltaCycle,
+
+    logic_thread: Option<JoinHandle<()>>,
 
     pub(crate) parameters: crate::window::DisplayParameters,
     pub(crate) display: Option<crate::window::DisplayHandle>,
@@ -153,10 +154,7 @@ where
             renderer: Default::default(),
 
             input_dispatcher,
-
-            cursor_grab: sync::Mirror::new(false),
             logic_thread: None,
-
             render_delta: Default::default(),
 
             parameters,
@@ -183,16 +181,36 @@ where
         }
     }
 
-    pub fn cursor_grab_state(&self) -> &sync::Mirror<bool> {
-        &self.cursor_grab
+    #[cfg(feature = "input")]
+    pub(crate) fn sync_cursor_options(&mut self) {
+        let cursor = self.input_dispatcher.cursor_options();
+        if !cursor.check_sync_status() {
+            let _ = cursor.sync();
+            let options = *cursor.get();
+
+            self.set_cursor_grabbed(options.grabbed);
+        }
     }
 
-    pub(crate) fn sync_cursor_mode(&mut self) {
-        if self.cursor_grab.check_sync_status() {
-            let _ = self.cursor_grab.sync();
-            let grabbed = *self.cursor_grab.get();
-            self.set_cursor_grabbed(grabbed);
-        }
+    /// Force the cursor to change to a given `position`.
+    ///
+    /// If `positions` is [`None`], the cursor will be set to the center of
+    /// the window.
+    pub fn force_cursor_pos(&self, position: Option<PhysicalPosition<u32>>) {
+        let dh = self
+            .display
+            .as_ref()
+            .expect("DisplayHandle/Window must be initialised");
+
+        dh.window()
+            .set_cursor_position(position.unwrap_or_else(|| {
+                let size = dh.window().inner_size();
+                PhysicalPosition {
+                    x: size.width / 2,
+                    y: size.height / 2,
+                }
+            }))
+            .unwrap();
     }
 
     /// Set whether the cursor mode should be set to `grabbed`.
@@ -209,13 +227,22 @@ where
             .expect("DisplayHandle/Window must be initialised");
 
         if grabbed {
-            let _ = dh
-                .window()
-                .set_cursor_grab(CursorGrabMode::Confined)
-                .or_else(|_| dh.window().set_cursor_grab(CursorGrabMode::Locked));
+            dh.window()
+                .set_cursor_grab(CursorGrabMode::Locked)
+                .or_else(|_| {
+                    #[cfg(debug_assertions)]
+                    tracing::event!(
+                        name: "cursor.grab.try_alternative",
+                        tracing::Level::DEBUG,
+                        "Failed to set cursor mode to 'Locked': will try 'Confined' instead"
+                    );
+                    dh.window().set_cursor_grab(CursorGrabMode::Confined)
+                })
+                .unwrap();
         } else {
-            let _ = dh.window().set_cursor_grab(CursorGrabMode::None);
+            dh.window().set_cursor_grab(CursorGrabMode::None).unwrap();
         };
+        dh.window().set_cursor_visible(!grabbed);
     }
 
     pub(crate) fn initialise_thread(&mut self) {

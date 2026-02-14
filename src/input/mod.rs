@@ -30,11 +30,14 @@ pub fn stream<const SLOTS: usize, const SECTIONS: usize>() -> (
     };
 
     // clones local value and shared arc data used to sync
+    let cursor_options = state.cursor_options.clone();
     let cursor_abs = state.snapshot.cursor.current.clone();
     let cursor_delta = state.snapshot.cursor.delta.clone();
     let mouse_wheel = state.snapshot.mouse_wheel.clone();
+
     let dispatcher = InputDispatcher {
         stream,
+        cursor_options,
         cursor_abs,
         cursor_delta,
         mouse_wheel,
@@ -50,6 +53,7 @@ type MouseWheelValue = f32;
 pub struct InputDispatcher<const SLOTS: usize, const SECTIONS: usize> {
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
 
+    cursor_options: sync::Mirror<CursorOptions>,
     cursor_delta: sync::Mirror<CursorValues>,
     cursor_abs: sync::Mirror<CursorValues>,
     mouse_wheel: sync::Mirror<MouseWheelValue>,
@@ -60,6 +64,12 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS>
         self.stream.frame_front();
         self.cursor_delta.publish((0.0, 0.0));
         self.mouse_wheel.publish(0.0);
+
+        // cursor options handled separately
+    }
+
+    pub fn cursor_options(&mut self) -> &mut sync::Mirror<CursorOptions> {
+        &mut self.cursor_options
     }
 
     pub fn handle_mouse_events(&mut self, event: &winit::event::WindowEvent) {
@@ -113,18 +123,30 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS>
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+pub struct CursorOptions {
+    pub grabbed: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct InputState<const SLOTS: usize, const SECTIONS: usize> {
     snapshot: InputSnapshot,
+    cursor_options: sync::Mirror<CursorOptions>,
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
 }
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
+    pub fn cursor_options(&mut self) -> &mut sync::Mirror<CursorOptions> {
+        &mut self.cursor_options
+    }
+
     pub fn sync(&mut self) {
         let _ = self.snapshot.mouse_wheel.sync();
         self.snapshot.cursor.sync();
         self.snapshot.keys.update();
         self.stream.frame_back();
+
+        // cursor options handled separately
     }
 
     pub fn poll_key_events(&mut self) {
