@@ -406,6 +406,10 @@ impl DeltaCycle {
     }
 }
 
+/// Between-frame time (commonly known as "delta time" or `dt`) representation
+/// in seconds in a 64-bits floating point which includes nanosecond detail.
+///
+/// Also see [`std::time::Duration::as_secs_f64`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DeltaTime(f64);
 
