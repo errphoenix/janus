@@ -3,9 +3,8 @@ use std::{
     ptr::NonNull,
     sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
     },
-    time::{Duration, Instant},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -16,18 +15,52 @@ pub enum SyncError {
 
 pub type SyncResult = Result<(), SyncError>;
 
+#[derive(Debug, Default, Clone)]
+pub struct SequentialLock(Arc<AtomicU64>);
+
+impl SequentialLock {
+    pub fn new() -> Self {
+        Self(Arc::new(AtomicU64::new(0)))
+    }
+
+    pub fn lock(&self) {
+        let mut seq = self.0.load(Ordering::Relaxed);
+        loop {
+            // even lock number = unlocked, else it's locked
+            if seq % 2 == 0 {
+                match self.0.compare_exchange_weak(
+                    seq,
+                    seq + 1,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(real) => seq = real,
+                }
+            } else {
+                std::hint::spin_loop();
+                seq = self.0.load(Ordering::Relaxed)
+            }
+        }
+    }
+
+    pub fn unlock(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::Release) + 1
+    }
+
+    pub fn get(&self, ordering: Ordering) -> u64 {
+        self.0.load(ordering)
+    }
+}
+
 #[derive(Debug)]
 pub struct Mirror<T: Clone> {
     local: T,
-    version: usize,
+    version: u64,
 
     inner: NonNull<T>,
-    latest: Arc<AtomicUsize>,
+    seq_lock: SequentialLock,
     counter: Arc<AtomicUsize>,
-
-    /// Indicates whether the underlying data is currently being read or
-    /// written to.
-    rw_signal: Arc<AtomicBool>,
 }
 
 impl<T: Default + Clone + Send + Sync> Default for Mirror<T> {
@@ -41,11 +74,10 @@ impl<T: Clone + Send + Sync> Clone for Mirror<T> {
         self.counter.fetch_add(1, Ordering::Acquire);
         Self {
             local: self.local.clone(),
-            version: self.version.clone(),
-            inner: self.inner.clone(),
-            latest: self.latest.clone(),
+            version: self.version,
+            inner: self.inner,
+            seq_lock: self.seq_lock.clone(),
             counter: self.counter.clone(),
-            rw_signal: self.rw_signal.clone(),
         }
     }
 }
@@ -62,56 +94,44 @@ impl<T: Clone> Drop for Mirror<T> {
 impl<T: Clone + Send + Sync> Mirror<T> {
     pub fn new(value: T) -> Self {
         let local = value.clone();
-        let latest = Arc::new(AtomicUsize::new(0));
-        let counter = Arc::new(AtomicUsize::new(1));
-        let rw_signal = Arc::new(AtomicBool::new(false));
         let inner = Box::leak(Box::from(value));
+        let seq_lock = SequentialLock::new();
+        let counter = Arc::new(AtomicUsize::new(1));
 
         Self {
             local,
             version: 0,
-
             inner: NonNull::from(inner),
-            latest,
+            seq_lock,
             counter,
-            rw_signal,
         }
     }
 
     /// Mutate the inner value with an `operation ` and publish it.
     ///
+    /// See [`Mirror::publish`].
+    ///
     /// The `operation` is called once this mirror instance has ensured
     /// exclusive access to the underlying data.
     pub fn publish_with<F: FnOnce(&mut T)>(&mut self, operation: F) {
-        while self
-            .rw_signal
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            std::hint::spin_loop();
-        }
+        self.seq_lock.lock();
 
         operation(&mut self.local);
 
-        // SAFETY: we ensure the underlying pointer is unused by
-        //         spinlocking for the state of the shared rw_signal.
-        //         At the same time, we lock the signal again to avoid
-        //         writes or other sync operations during our operation.
+        // SAFETY: we ensure the underlying pointer is unused by ensuring the
+        // shared SequentialLock is on an EVEN value; which indicates it is
+        // under no exclusive access and safe to write to.
         unsafe {
-            std::ptr::copy_nonoverlapping(&self.local as *const T, self.inner.as_ptr(), 1);
+            std::ptr::copy_nonoverlapping(&self.local, self.inner.as_ptr(), 1);
         }
 
-        self.rw_signal.store(false, Ordering::Release);
-        self.version = self.latest.fetch_add(1, Ordering::Release) + 1;
+        self.version = self.seq_lock.unlock();
     }
 
-    /// Publish a new `value` to the shared data.
+    /// Publish a new `value` to the underlying shared pointer.
     ///
-    /// This operation blocks if the data is currently being synchronised by or
-    /// published other [`Mirror`] instances.
-    ///
-    /// Nonetheless, synchronisation is a very small operation; thus you can
-    /// expect the block to be very short in most cases.
+    /// This operation will block if the shared state is under exclusive
+    /// access, ie. another Mirror is publishing to it.
     ///
     /// # Notes on Synchronisation
     ///
@@ -121,73 +141,75 @@ impl<T: Clone + Send + Sync> Mirror<T> {
     ///
     /// The specific instance of [`Mirror`] that has published a new `value`
     /// does not require any synchronisation.
-    /// This is important to keep in mind, especially in the case of
-    /// single-producer scenarios: the producer will never need a
-    /// synchronisation.
+    /// In the case of single-producer scenarios, the producer will never
+    /// require an explicit [`Mirror::sync`] call.
     pub fn publish(&mut self, value: T) {
-        while self
-            .rw_signal
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            std::hint::spin_loop();
-        }
+        self.seq_lock.lock();
 
-        // SAFETY: we ensure the underlying pointer is unused by
-        //         spinlocking for the state of the shared rw_signal.
-        //         At the same time, we lock the signal again to avoid
-        //         writes or other sync operations during our operation.
+        // SAFETY: we ensure the underlying pointer is unused by ensuring the
+        // shared SequentialLock is on an EVEN value; which indicates it is
+        // under no exclusive access and safe to write to.
         unsafe {
-            std::ptr::copy_nonoverlapping(&value as *const T, self.inner.as_ptr(), 1);
+            std::ptr::copy_nonoverlapping(&value, self.inner.as_ptr(), 1);
         }
 
-        self.rw_signal.store(false, Ordering::Release);
-        self.version = self.latest.fetch_add(1, Ordering::Release) + 1;
         self.local = value;
+        self.version = self.seq_lock.unlock();
     }
 
     /// Checks whether the [`Mirror`] is up-to-date with the other accessors.
     pub fn check_sync_status(&self) -> bool {
-        let latest_version = self.latest.load(Ordering::Acquire);
-        self.version == latest_version
+        let seq = self.seq_lock.get(Ordering::Acquire);
+        self.version == seq && seq % 2 == 0
     }
 
     /// Attempt to synchronise without ever blocking.
     ///
-    /// This will instantly give up if the rw signal is currently on, i.e. any
-    /// other synchronisation operation is happening.
+    /// This will instantly give up if shared state is under exclusive access.
     ///
     /// Note that synchronisation locks are usually very short due to them
     /// being a very cheap operation, so this is usually not worth it unless
-    /// synchronisation is really not crucial.
+    /// synchronisation is really not crucial or **very** frequent operations.
     ///
     /// In most cases, prefer the standard [`sync`](Mirror::sync).
     ///
     /// # Returns
-    /// If the read/write lock is currently on, a [`SyncError::Locked`] is
+    /// If the shared state is currently locked, a [`SyncError::Locked`] is
     /// returned.
     /// Otherwise, [`Ok`] is returned.
     pub fn sync_noblock(&mut self) -> SyncResult {
-        let latest_version = self.latest.load(Ordering::Acquire);
-        if self.version < latest_version {
-            if self
-                .rw_signal
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-            {
+        loop {
+            let seq_0 = self.seq_lock.get(Ordering::Acquire);
+
+            if seq_0 % 2 != 0 {
                 return Err(SyncError::Locked);
             }
 
-            // SAFETY: we ensure the underlying pointer is unused by
-            //         polling for the state of the shared rw_signal.
-            //         At the same time, we lock the signal again to avoid
-            //         writes or other sync operations during our operation.
+            // up-to-date check
+            if self.version == seq_0 {
+                return Ok(());
+            }
+
+            // SAFETY: we ensure the underlying pointer is unused by ensuring the
+            // shared SequentialLock is on an EVEN value; which indicates it is
+            // under no exclusive access and safe to write to.
             unsafe {
                 std::ptr::copy_nonoverlapping(self.inner.as_ptr(), &mut self.local, 1);
             }
 
-            self.rw_signal.store(false, Ordering::Release);
-            self.version = latest_version;
+            // ensure prior operations (copy from shared to local) is not
+            // reordered before the next version load.
+            std::sync::atomic::fence(Ordering::Acquire);
+            let seq_1 = self.seq_lock.get(Ordering::Acquire);
+
+            // value is guaranteed to not have changed since sync started.
+            if seq_0 == seq_1 {
+                self.version = seq_1;
+                break;
+            }
+
+            // value changed while syncing: re-sync
+            continue;
         }
 
         Ok(())
@@ -195,90 +217,51 @@ impl<T: Clone + Send + Sync> Mirror<T> {
 
     /// Synchronise the local cache with the real remote value.
     ///
-    /// This will block if the rw signal is currently on, (i.e. any other
-    /// synchronisation operation is happening) until it is unlocked.
+    /// This will block if the shared state is under exclusive access, until it
+    /// no longer is.
     ///
     /// Note that synchronisation locks are usually very short due to them
-    /// being a very cheap operation, so it usually does not incur heavy
+    /// being a very cheap operation, so it usually only incurs little, if any,
     /// performance costs.
-    ///
-    /// This is a read operation during which the shared signal will be locked
-    /// for its duration, forbidding other sync operations.
     ///
     /// # Returns
     /// This operation cannot fail. An [`Ok`] is always returned.
     pub fn sync(&mut self) -> SyncResult {
-        let latest_version = self.latest.load(Ordering::Acquire);
-        if self.version < latest_version {
-            while self
-                .rw_signal
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-            {
+        loop {
+            let seq_0 = self.seq_lock.get(Ordering::Acquire);
+
+            if seq_0 % 2 != 0 {
                 std::hint::spin_loop();
+                continue;
             }
 
-            // SAFETY: we ensure the underlying pointer is unused by
-            //         spinlocking for the state of the shared rw_signal.
-            //         At the same time, we lock the signal again to avoid
-            //         writes or other sync operations during our operation.
+            // up-to-date check
+            if self.version == seq_0 {
+                return Ok(());
+            }
+
+            // SAFETY: we ensure the underlying pointer is unused by ensuring the
+            // shared SequentialLock is on an EVEN value; which indicates it is
+            // under no exclusive access and safe to write to.
             unsafe {
                 std::ptr::copy_nonoverlapping(self.inner.as_ptr(), &mut self.local, 1);
             }
 
-            self.rw_signal.store(false, Ordering::Release);
-            self.version = latest_version;
-        }
-        Ok(())
-    }
+            // ensure prior operations (copy from shared to local) is not
+            // reordered before the next version load.
+            std::sync::atomic::fence(Ordering::Acquire);
+            let seq_1 = self.seq_lock.get(Ordering::Acquire);
 
-    /// Attempt to synchronise the local cache within a specified `timeout`.
-    ///
-    /// This will block if the rw signal is currently on, (i.e. any other
-    /// synchronisation operation is happening) until it is unlocked or the
-    /// timeout expires, in which case an error is returned..
-    ///
-    /// Note that synchronisation locks are usually very short due to them
-    /// being a very cheap operation, so it usually does not incur heavy
-    /// performance costs.
-    ///
-    /// This is a read operation during which the shared signal will be locked
-    /// for its duration, forbidding other sync operations.
-    ///
-    /// # Returns
-    /// If the read/write lock is not unlocked within the `timeout`, a
-    /// [`SyncError::TimeoutExceeded`] containing the total waiting time (in
-    /// nanos) is returned.
-    /// Otherwise, [`Ok`] is returned.
-    pub fn sync_timeout(&mut self, timeout: Duration) -> SyncResult {
-        let start = Instant::now();
-        let latest_version = self.latest.load(Ordering::Acquire);
-        if self.version < latest_version {
-            while self
-                .rw_signal
-                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                .is_err()
-            {
-                let dt = Instant::now().duration_since(start);
-                if dt > timeout {
-                    return Err(SyncError::TimeoutExceeded {
-                        exceed_time_ns: dt.as_nanos(),
-                    });
-                }
-                std::hint::spin_loop();
+            // value is guaranteed to not have changed since sync started.
+            if seq_0 == seq_1 {
+                self.version = seq_1;
+                break;
             }
 
-            // SAFETY: we ensure the underlying pointer is unused by
-            //         spinlocking for the state of the shared rw_signal.
-            //         At the same time, we lock the signal again to avoid
-            //         writes or other sync operations during our operation.
-            unsafe {
-                std::ptr::copy_nonoverlapping(self.inner.as_ptr(), &mut self.local, 1);
-            }
-
-            self.rw_signal.store(false, Ordering::Release);
-            self.version = latest_version;
+            // value changed while syncing: re-sync
+            continue;
         }
+
         Ok(())
     }
 
