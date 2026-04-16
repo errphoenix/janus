@@ -1,5 +1,6 @@
 use std::{
     ops::Deref,
+    ptr::NonNull,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -15,13 +16,14 @@ pub enum SyncError {
 
 pub type SyncResult = Result<(), SyncError>;
 
-#[derive(Debug, Clone)]
-pub struct Mirror<T: Clone + Send + Sync> {
+#[derive(Debug)]
+pub struct Mirror<T: Clone> {
     local: T,
     version: usize,
 
-    ptr: Arc<*mut T>,
+    inner: NonNull<T>,
     latest: Arc<AtomicUsize>,
+    counter: Arc<AtomicUsize>,
 
     /// Indicates whether the underlying data is currently being read or
     /// written to.
@@ -34,55 +36,69 @@ impl<T: Default + Clone + Send + Sync> Default for Mirror<T> {
     }
 }
 
+impl<T: Clone + Send + Sync> Clone for Mirror<T> {
+    fn clone(&self) -> Self {
+        self.counter.fetch_add(1, Ordering::Acquire);
+        Self {
+            local: self.local.clone(),
+            version: self.version.clone(),
+            inner: self.inner.clone(),
+            latest: self.latest.clone(),
+            counter: self.counter.clone(),
+            rw_signal: self.rw_signal.clone(),
+        }
+    }
+}
+
+impl<T: Clone> Drop for Mirror<T> {
+    fn drop(&mut self) {
+        if self.counter.fetch_sub(1, Ordering::Release) == 1 {
+            std::sync::atomic::fence(Ordering::Acquire);
+            drop(unsafe { Box::from_raw(self.inner.as_ptr()) });
+        }
+    }
+}
+
 impl<T: Clone + Send + Sync> Mirror<T> {
     pub fn new(value: T) -> Self {
         let local = value.clone();
         let latest = Arc::new(AtomicUsize::new(0));
-        let ptr = Arc::new(Box::into_raw(Box::new(value)));
+        let counter = Arc::new(AtomicUsize::new(1));
         let rw_signal = Arc::new(AtomicBool::new(false));
+        let inner = Box::leak(Box::from(value));
 
         Self {
             local,
             version: 0,
 
-            ptr,
+            inner: NonNull::from(inner),
             latest,
+            counter,
             rw_signal,
         }
     }
 
     /// Mutate the inner value with an `operation ` and publish it.
     ///
-    /// This is functionally identical to [`Mirror::publish`].
-    ///
-    /// This function allows you capture the current cached value and modify
-    /// it, then it will be published.
-    ///
-    /// Note that the `operation` is called before blocking for the read/write
-    /// signal.
-    /// Thus, this is no different from manually getting the cached value,
-    /// mutating it, and then publishing it; this function is merely for
-    /// convenience.
-    ///
-    /// More importantly, this means the caller still holds the responsability
-    /// to synchronise if changes from other Mirrors may be expected.
+    /// The `operation` is called once this mirror instance has ensured
+    /// exclusive access to the underlying data.
     pub fn publish_with<F: FnOnce(&mut T)>(&mut self, operation: F) {
-        operation(&mut self.local);
-
         while self
             .rw_signal
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            std::thread::yield_now();
+            std::hint::spin_loop();
         }
+
+        operation(&mut self.local);
 
         // SAFETY: we ensure the underlying pointer is unused by
         //         spinlocking for the state of the shared rw_signal.
         //         At the same time, we lock the signal again to avoid
         //         writes or other sync operations during our operation.
         unsafe {
-            std::ptr::copy_nonoverlapping(&self.local as *const T, *self.ptr, 1);
+            std::ptr::copy_nonoverlapping(&self.local as *const T, self.inner.as_ptr(), 1);
         }
 
         self.rw_signal.store(false, Ordering::Release);
@@ -114,7 +130,7 @@ impl<T: Clone + Send + Sync> Mirror<T> {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            std::thread::yield_now();
+            std::hint::spin_loop();
         }
 
         // SAFETY: we ensure the underlying pointer is unused by
@@ -122,7 +138,7 @@ impl<T: Clone + Send + Sync> Mirror<T> {
         //         At the same time, we lock the signal again to avoid
         //         writes or other sync operations during our operation.
         unsafe {
-            std::ptr::copy_nonoverlapping(&value as *const T, *self.ptr, 1);
+            std::ptr::copy_nonoverlapping(&value as *const T, self.inner.as_ptr(), 1);
         }
 
         self.rw_signal.store(false, Ordering::Release);
@@ -167,7 +183,7 @@ impl<T: Clone + Send + Sync> Mirror<T> {
             //         At the same time, we lock the signal again to avoid
             //         writes or other sync operations during our operation.
             unsafe {
-                std::ptr::copy_nonoverlapping(*self.ptr, &mut self.local, 1);
+                std::ptr::copy_nonoverlapping(self.inner.as_ptr(), &mut self.local, 1);
             }
 
             self.rw_signal.store(false, Ordering::Release);
@@ -199,7 +215,7 @@ impl<T: Clone + Send + Sync> Mirror<T> {
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
                 .is_err()
             {
-                std::thread::yield_now();
+                std::hint::spin_loop();
             }
 
             // SAFETY: we ensure the underlying pointer is unused by
@@ -207,7 +223,7 @@ impl<T: Clone + Send + Sync> Mirror<T> {
             //         At the same time, we lock the signal again to avoid
             //         writes or other sync operations during our operation.
             unsafe {
-                std::ptr::copy_nonoverlapping(*self.ptr, &mut self.local, 1);
+                std::ptr::copy_nonoverlapping(self.inner.as_ptr(), &mut self.local, 1);
             }
 
             self.rw_signal.store(false, Ordering::Release);
@@ -249,7 +265,7 @@ impl<T: Clone + Send + Sync> Mirror<T> {
                         exceed_time_ns: dt.as_nanos(),
                     });
                 }
-                std::thread::yield_now();
+                std::hint::spin_loop();
             }
 
             // SAFETY: we ensure the underlying pointer is unused by
@@ -257,7 +273,7 @@ impl<T: Clone + Send + Sync> Mirror<T> {
             //         At the same time, we lock the signal again to avoid
             //         writes or other sync operations during our operation.
             unsafe {
-                std::ptr::copy_nonoverlapping(*self.ptr, &mut self.local, 1);
+                std::ptr::copy_nonoverlapping(self.inner.as_ptr(), &mut self.local, 1);
             }
 
             self.rw_signal.store(false, Ordering::Release);
@@ -273,16 +289,6 @@ impl<T: Clone + Send + Sync> Mirror<T> {
     /// You may want to do so by explicitly calling any of the sync functions.
     pub fn get(&self) -> &T {
         &self.local
-    }
-}
-
-impl<T: Clone + Send + Sync> Drop for Mirror<T> {
-    fn drop(&mut self) {
-        // only one left, we drop the data behind the shared pointer to
-        // avoid memory leaks
-        if Arc::strong_count(&self.ptr) == 1 {
-            let _v = unsafe { Box::from_raw(*self.ptr) };
-        }
     }
 }
 
