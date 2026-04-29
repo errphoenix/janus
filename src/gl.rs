@@ -51,3 +51,81 @@ pub fn align_to_gl_ssbo(value: i32) -> i32 {
 }
 
 pub use self::gl_inner::*;
+
+pub fn barrier_all() {
+    unsafe {
+        MemoryBarrier(ALL_BARRIER_BITS);
+    }
+}
+
+pub fn barrier_queries() {
+    unsafe {
+        MemoryBarrier(QUERY_BUFFER_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_buffer_updates() {
+    unsafe {
+        MemoryBarrier(BUFFER_UPDATE_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_commands() {
+    unsafe {
+        MemoryBarrier(COMMAND_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_texture_updates() {
+    unsafe {
+        MemoryBarrier(TEXTURE_UPDATE_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_shader_image() {
+    unsafe {
+        MemoryBarrier(SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_texture_fetch() {
+    unsafe {
+        MemoryBarrier(TEXTURE_FETCH_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_uniforms() {
+    unsafe {
+        MemoryBarrier(UNIFORM_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_vertex_attributes() {
+    unsafe {
+        MemoryBarrier(VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_elements() {
+    unsafe {
+        MemoryBarrier(ELEMENT_ARRAY_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_framebuffers() {
+    unsafe {
+        MemoryBarrier(FRAMEBUFFER_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_atomics() {
+    unsafe {
+        MemoryBarrier(ATOMIC_COUNTER_BARRIER_BIT);
+    }
+}
+
+pub fn barrier_shader_storage() {
+    unsafe {
+        MemoryBarrier(SHADER_STORAGE_BARRIER_BIT);
+    }
+}
