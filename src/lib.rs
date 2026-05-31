@@ -10,6 +10,9 @@ pub mod texture;
 #[cfg(feature = "render")]
 pub mod window;
 
+#[cfg(feature = "jobs")]
+pub mod jobs;
+
 pub mod sync;
 
 #[cfg(all(feature = "render", feature = "state"))]

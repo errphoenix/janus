@@ -9,6 +9,7 @@ glutin = { version = "0.32.3", optional = true }
 glutin-winit = { version = "0.5.0", optional = true }
 image = { version = "0.25.9", optional = true }
 log = "0.4.29"
+rayon = { version = "=1.12.0", optional = true }
 thiserror = "2.0.18"
 tracing = "0.1.44"
 winit = { version = "0.30.12", optional = true }
@@ -20,6 +21,7 @@ render = ["dep:glutin", "dep:glutin-winit", "dep:winit"]
 input = ["render"]
 expose_gl = []
 textures = ["dep:image"]
+jobs = ["dep:rayon"]
 
 [build-dependencies]
 gl_generator = "0.14.0"
