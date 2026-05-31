@@ -49,6 +49,16 @@ where
     R: Default + Clone,
 {
     pub fn new(thread_count: usize) -> Self {
+        {
+            let buffer_bytes = size_of::<WorkBuffers<T, R>>();
+            let buffer_total_bytes = buffer_bytes * thread_count;
+
+            tracing::event!(
+                tracing::Level::INFO,
+                "Create buffered-routine with {thread_count} threads, each with work-buffer size {buffer_bytes} bytes on stack (x{thread_count} = {buffer_total_bytes} bytes total)"
+            );
+        }
+
         Self {
             thread_buffers: ThreadBuffers::new(thread_count),
         }
