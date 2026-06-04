@@ -1,6 +1,9 @@
 pub mod stream;
 
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 
 pub use stream::{DeltaPacket, IterInputStream};
 pub use winit::event::MouseButton;
@@ -31,15 +34,13 @@ pub fn stream<const SLOTS: usize, const SECTIONS: usize>() -> (
 
     // clones local value and shared arc data used to sync
     let cursor_options = state.cursor_options.clone();
-    let cursor_abs = state.snapshot.cursor.current.clone();
-    let cursor_delta = state.snapshot.cursor.delta.clone();
+    let cursor = state.snapshot.cursor.clone();
     let mouse_wheel = state.snapshot.mouse_wheel.clone();
 
     let dispatcher = InputDispatcher {
         stream,
         cursor_options,
-        cursor_abs,
-        cursor_delta,
+        cursor,
         mouse_wheel,
     };
 
@@ -49,41 +50,55 @@ pub fn stream<const SLOTS: usize, const SECTIONS: usize>() -> (
 type CursorValues = (f64, f64);
 type MouseWheelValue = f32;
 
-#[derive(Clone, Debug, Default)]
+/// This is the proper "owner" of the input synchronisation structures,
+/// despite shared ownership.
+///
+/// This is the only place where [`TriCell::advance`] or similar main
+/// synchronisation duties should occur.
+#[derive(Debug, Default)]
 pub struct InputDispatcher<const SLOTS: usize, const SECTIONS: usize> {
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
 
-    cursor_options: sync::Mirror<CursorOptions>,
-    cursor_delta: sync::Mirror<CursorValues>,
-    cursor_abs: sync::Mirror<CursorValues>,
-    mouse_wheel: sync::Mirror<MouseWheelValue>,
+    cursor_options: Arc<CursorOptions>,
+    cursor: Arc<Cursor>,
+    mouse_wheel: Arc<sync::TriCell<MouseWheelValue>>,
 }
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS> {
     pub fn sync(&mut self) {
         self.stream.frame_front();
-        self.cursor_delta.publish((0.0, 0.0));
-        self.mouse_wheel.publish(0.0);
+
+        let cursor_abs = self.cursor.current.get();
+
+        let _ = self.cursor.current.advance();
+        let _ = self.cursor.delta.advance();
+        let _ = self.mouse_wheel.advance();
+
+        self.cursor.current.set(cursor_abs);
+        self.cursor.delta.set((0.0, 0.0));
+        self.mouse_wheel.set(0.0);
 
         // cursor options handled separately
     }
 
-    pub fn cursor_options(&mut self) -> &mut sync::Mirror<CursorOptions> {
-        &mut self.cursor_options
+    pub fn cursor_options(&self) -> &CursorOptions {
+        &self.cursor_options
+    }
+
+    pub fn cursor_options_shared(&self) -> &Arc<CursorOptions> {
+        &self.cursor_options
     }
 
     pub fn handle_mouse_events(&mut self, event: &winit::event::WindowEvent) {
         match event {
             winit::event::WindowEvent::CursorMoved { position, .. } => {
-                self.cursor_abs.publish((position.x, position.y));
+                self.cursor.current.set((position.x, position.y));
             }
             winit::event::WindowEvent::MouseWheel {
                 delta: MouseScrollDelta::LineDelta(_, delta),
                 ..
             } => {
-                self.mouse_wheel.publish_with(|d| {
-                    *d += *delta;
-                });
+                self.mouse_wheel.set_with(|d| d + delta);
             }
             _ => {}
         }
@@ -92,10 +107,9 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS>
     pub fn handle_raw_cursor_events(&mut self, event: &winit::event::DeviceEvent) {
         match event {
             winit::event::DeviceEvent::MouseMotion { delta: (dx, dy) } => {
-                self.cursor_delta.publish_with(|(o_dx, o_dy)| {
-                    *o_dx += *dx;
-                    *o_dy += *dy;
-                });
+                self.cursor
+                    .delta
+                    .set_with(|(odx, ody)| (odx + dx, ody + dy));
             }
             _ => {}
         }
@@ -123,26 +137,49 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS>
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
+// todo: change to single AtomicU8
+#[derive(Debug, Default)]
 pub struct CursorOptions {
-    pub grabbed: bool,
+    pub grabbed: AtomicBool,
+    pub dirty: AtomicBool,
 }
 
-#[derive(Clone, Debug, Default)]
+impl CursorOptions {
+    pub fn check_grabbed(&self) -> bool {
+        self.grabbed.load(Ordering::Relaxed)
+    }
+
+    pub fn check_dirty(&self) -> bool {
+        self.grabbed.load(Ordering::Relaxed)
+    }
+
+    pub fn set_grabbed(&self, grabbed: bool) {
+        let changed = self
+            .grabbed
+            .compare_exchange(!grabbed, grabbed, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok();
+
+        if changed {
+            self.dirty.store(true, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Read-only view of the current state of the input as received from the
+/// window thread.
+#[derive(Debug, Default)]
 pub struct InputState<const SLOTS: usize, const SECTIONS: usize> {
     snapshot: InputSnapshot,
-    cursor_options: sync::Mirror<CursorOptions>,
+    cursor_options: Arc<CursorOptions>,
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
 }
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
-    pub fn cursor_options(&mut self) -> &mut sync::Mirror<CursorOptions> {
-        &mut self.cursor_options
+    pub fn cursor_options(&self) -> &Arc<CursorOptions> {
+        &self.cursor_options
     }
 
     pub fn sync(&mut self) {
-        let _ = self.snapshot.mouse_wheel.sync();
-        self.snapshot.cursor.sync();
         self.snapshot.keys.update();
         self.stream.frame_back();
 
@@ -155,8 +192,8 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
             .for_each(|ev| self.snapshot.keys.press_change(ev));
     }
 
-    pub fn mouse_wheel(&self) -> &MouseWheelValue {
-        &self.snapshot.mouse_wheel.get()
+    pub fn mouse_wheel(&self) -> MouseWheelValue {
+        self.snapshot.mouse_wheel()
     }
 
     pub fn keys(&self) -> &Keys {
@@ -172,11 +209,11 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct InputSnapshot {
     keys: Keys,
-    cursor: Cursor,
-    mouse_wheel: sync::Mirror<MouseWheelValue>,
+    cursor: Arc<Cursor>,
+    mouse_wheel: Arc<sync::TriCell<MouseWheelValue>>,
 }
 
 impl InputSnapshot {
@@ -188,20 +225,20 @@ impl InputSnapshot {
         &self.cursor
     }
 
-    pub fn keys_mut(&mut self) -> &mut Keys {
-        &mut self.keys
-    }
-
-    pub fn cursor_mut(&mut self) -> &mut Cursor {
-        &mut self.cursor
-    }
-
-    pub fn mouse_wheel(&self) -> &MouseWheelValue {
+    pub fn mouse_wheel(&self) -> MouseWheelValue {
         self.mouse_wheel.get()
     }
 
-    pub fn disjoint_mut(&mut self) -> (&mut Keys, &mut Cursor) {
-        (&mut self.keys, &mut self.cursor)
+    pub fn cursor_shared(&self) -> &Arc<Cursor> {
+        &self.cursor
+    }
+
+    pub fn mouse_wheel_shared(&self) -> &Arc<sync::TriCell<MouseWheelValue>> {
+        &self.mouse_wheel
+    }
+
+    pub fn keys_mut(&mut self) -> &mut Keys {
+        &mut self.keys
     }
 }
 
@@ -392,20 +429,15 @@ impl From<winit::event::MouseButton> for MouseButtonIndex {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct Cursor {
-    current: sync::Mirror<CursorValues>,
-    delta: sync::Mirror<CursorValues>,
+    current: sync::TriCell<CursorValues>,
+    delta: sync::TriCell<CursorValues>,
 }
 
 impl Cursor {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn sync(&mut self) {
-        let _ = self.current.sync();
-        let _ = self.delta.sync();
     }
 
     #[inline(always)]

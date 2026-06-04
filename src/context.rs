@@ -5,12 +5,10 @@ use std::time::{Duration, Instant};
 use std::thread::JoinHandle;
 
 #[cfg(feature = "render")]
-use winit::dpi::{LogicalPosition, PhysicalPosition};
+use winit::dpi::PhysicalPosition;
 
 #[cfg(feature = "input")]
 use crate::input::{self, InputDispatcher as DispatchInput};
-#[cfg(feature = "render")]
-use crate::sync;
 
 /// A stateful context defines only initialization logic (which should also
 /// initialize the state) and loop logic.
@@ -183,12 +181,15 @@ where
 
     #[cfg(feature = "input")]
     pub(crate) fn sync_cursor_options(&mut self) {
-        let cursor = self.input_dispatcher.cursor_options();
-        if !cursor.check_sync_status() {
-            let _ = cursor.sync();
-            let options = *cursor.get();
+        use std::sync::atomic::Ordering;
 
-            self.set_cursor_grabbed(options.grabbed);
+        let cursor = self.input_dispatcher.cursor_options();
+        if let Ok(true) = cursor
+            .dirty
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |_| Some(false))
+        {
+            let grabbed = cursor.grabbed.load(Ordering::Relaxed);
+            self.set_cursor_grabbed(grabbed);
         }
     }
 

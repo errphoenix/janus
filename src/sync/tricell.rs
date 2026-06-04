@@ -1,5 +1,6 @@
 use std::{
     cell::UnsafeCell,
+    ops::Deref,
     sync::atomic::{AtomicUsize, Ordering},
 };
 
@@ -60,6 +61,11 @@ where
 
     /// Advances the internal read and write indices of the triple buffer.
     ///
+    /// This will also reset the value stored in the previous `read` index,
+    /// allowing for a fresh `Default` value in its place once that section is
+    /// used again in a future frame.
+    /// This is only done if the advance operation succeeds.
+    ///
     /// # Returns
     /// The previous (before advancing) write and read index, respectively.
     ///
@@ -74,7 +80,23 @@ where
             .read_i
             .fetch_update(Ordering::Release, Ordering::Acquire, |i| Some((i + 1) % 3));
 
+        if let Ok(ri) = read {
+            unsafe { *self.pointers[ri].get() = T::default() };
+        }
+
         (write, read)
+    }
+
+    /// Update the value stored in the current section, first fetching the
+    /// current value.
+    ///
+    /// This allows for cumulative updates in the case of multiple `set`
+    /// operations in one frame.
+    pub fn set_with<F: FnOnce(T) -> T>(&self, update_op: F) {
+        let raw = unsafe { self.write_raw() };
+        let t = unsafe { *raw.get() };
+        let new = update_op(t);
+        unsafe { (*raw.get()) = new }
     }
 
     /// Update the `value` stored in the current 'write' section and advance
@@ -122,5 +144,22 @@ where
     /// The stored value is returned even if the index fails to advance.
     pub fn get(&self) -> T {
         unsafe { *self.read_raw().get() }
+    }
+
+    pub fn get_ref(&self) -> &T {
+        unsafe {
+            self.read_raw()
+                .get()
+                .as_ref()
+                .expect("pointer is never null")
+        }
+    }
+}
+
+impl<T: Default + Clone + Copy + Send + Sync> Deref for TriCell<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.get_ref()
     }
 }
