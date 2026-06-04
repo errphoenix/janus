@@ -24,8 +24,12 @@ impl<T: Default, R: Default> ThreadBuffers<T, R> {
         Self(buffers)
     }
 
-    pub fn buffers(&self) -> &[UnsafeCell<WorkBuffers<T, R>>] {
+    pub fn buffers_raw(&self) -> &[UnsafeCell<WorkBuffers<T, R>>] {
         &self.0
+    }
+
+    pub fn buffers_mut(&mut self) -> impl Iterator<Item = &mut WorkBuffers<T, R>> {
+        self.0.iter_mut().map(|cell| cell.get_mut())
     }
 
     pub fn get_current_mut(&self) -> &mut WorkBuffers<T, R> {
@@ -62,6 +66,10 @@ where
         Self {
             thread_buffers: ThreadBuffers::new(thread_count),
         }
+    }
+
+    pub fn thread_buffers(&mut self) -> &mut ThreadBuffers<T, R> {
+        &mut self.thread_buffers
     }
 
     pub fn dispatch_jobs<
