@@ -157,7 +157,7 @@ impl Texture {
 /// the texture resources on the GPU and it has no effects on its lifecycle.
 ///
 /// Internally, [`TextureView`] holds a copy to the u32 OpenGL pointer to the
-/// texture resource, thus allowing OpenGL operations.  
+/// texture resource, thus allowing OpenGL operations.
 #[derive(Clone, Debug, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct TextureView {
     gl_pointer: u32,
@@ -313,10 +313,10 @@ impl GlProperty for TextureWrapping {
 /// The image format for an OpenGL texture.
 ///
 /// This determines to the number of components present in the texture for
-/// each pixel.  
+/// each pixel.
 ///
 /// This directly corresponds to the `format` field in OpenGL `glTexImageXD`
-/// function calls.  
+/// function calls.
 /// It is also used to determine which `internalformat` should be used,
 /// together with [`ImageType`].
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -378,7 +378,7 @@ impl ImageFormat {
 /// The data type of the pixels in an OpenGL texture.
 ///
 /// This, together with [`ImageFormat`], determines the `internalformat` field
-/// for OpenGL `glTexImageXD` function calls.  
+/// for OpenGL `glTexImageXD` function calls.
 /// It also determines the value for the `type` field.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub enum ImageType {
@@ -878,7 +878,7 @@ pub fn set_wrapping_st(target: TextureTarget, wrapping: TextureWrapping) {
     }
 }
 
-/// Set R texture wrapping used in 3D textures.  
+/// Set R texture wrapping used in 3D textures.
 ///
 /// It is meant to be used in combination with [`set_wrapping_st`].
 ///

@@ -70,3 +70,25 @@ pub fn is_wayland() -> bool {
         None => false,
     }
 }
+
+/// Implementation of the `fnv1a` hashing algorithms for strings.
+pub const fn hash_string(string: &str) -> u64 {
+    hash_string_b(string.as_bytes())
+}
+
+/// Implementation of the `fnv1a` hashing algorithms for strings as raw bytes.
+pub const fn hash_string_b(bytes: &[u8]) -> u64 {
+    const BIAS: u64 = 0xcbf29ce484222325;
+    const MUL: u64 = 0x10000000000001b3;
+
+    let mut hash = BIAS;
+    let mut i = 0;
+
+    while i < bytes.len() {
+        hash ^= bytes[i] as u64;
+        hash = hash.wrapping_mul(MUL);
+        i += 1;
+    }
+
+    hash
+}
