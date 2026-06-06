@@ -1,7 +1,13 @@
-mod gl_inner {
+pub(crate) mod gl_inner {
     #![allow(clippy::all)]
 
     use std::ffi::CStr;
+
+    pub static mut INITIALIZED: bool = false;
+
+    pub const fn has_gl_init() -> bool {
+        unsafe { INITIALIZED }
+    }
 
     /// Converts a pointer to a rust string slice.
     ///

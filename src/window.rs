@@ -364,6 +364,10 @@ fn load_gl_symbols<D: GlDisplay>(display: &D) {
         "Shaders version: {shaders_ver}"
     );
 
+    unsafe {
+        crate::gl::INITIALIZED = true;
+    }
+
     #[cfg(feature = "expose_gl")]
     {
         let gl_alignment = unsafe {
