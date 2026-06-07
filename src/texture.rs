@@ -14,6 +14,7 @@ fn read_image_data<P: AsRef<Path>>(path: P) -> Result<Box<[u8]>, ImageError> {
     Ok(decoded.as_bytes().into())
 }
 
+#[non_exhaustive]
 #[derive(thiserror::Error, Debug)]
 pub enum TextureError {
     #[error("failed to load image: {0}")]
