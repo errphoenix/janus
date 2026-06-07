@@ -1,24 +1,26 @@
 use std::path::Path;
 
 use super::{GlProperty, GpuResource, gl};
-use anyhow::Result;
-use image::{DynamicImage, ImageReader};
+use image::{DynamicImage, ImageError, ImageReader};
 
 #[inline(always)]
-fn load_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage> {
-    Ok(ImageReader::open(path)?.with_guessed_format()?.decode()?)
+fn load_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage, ImageError> {
+    ImageReader::open(path)?.with_guessed_format()?.decode()
 }
 
 #[inline(always)]
-fn read_image_data<P: AsRef<Path>>(path: P) -> Result<Box<[u8]>> {
+fn read_image_data<P: AsRef<Path>>(path: P) -> Result<Box<[u8]>, ImageError> {
     let decoded = load_image(path)?;
     Ok(decoded.as_bytes().into())
 }
 
 #[derive(thiserror::Error, Debug)]
 pub enum TextureError {
-    #[error("unsupported image format: {0:?}")]
-    UnsupportedFormat(image::DynamicImage),
+    #[error("failed to load image: {0}")]
+    ImageLoadError(ImageError),
+
+    #[error("unsupported image format")]
+    UnsupportedFormat,
 }
 
 #[derive(Debug, Default)]
@@ -83,7 +85,7 @@ pub struct Texture {
 }
 
 impl Texture {
-    pub fn from_image(image: DynamicImage) -> Result<Self> {
+    pub fn from_image(image: &DynamicImage) -> Result<Self, TextureError> {
         let (bytes, w, h, (px, fmt)) = {
             let bytes: Box<[u8]> = image.as_bytes().into();
             let width = image.width() as i32;
@@ -108,7 +110,7 @@ impl Texture {
                 image::DynamicImage::ImageLumaA16(_) => {
                     Ok((ImageType::Bits16, ImageFormat::DualChannel))
                 }
-                unsupported => Err(TextureError::UnsupportedFormat(unsupported)),
+                _ => Err(TextureError::UnsupportedFormat),
             }?;
 
             (bytes, width, height, (pixel, format))
@@ -117,9 +119,9 @@ impl Texture {
         Ok(Self::from_bytes(w, h, &bytes, px, fmt))
     }
 
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
-        let image = load_image(path)?;
-        Self::from_image(image)
+    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, TextureError> {
+        let image = load_image(path).map_err(TextureError::ImageLoadError)?;
+        Self::from_image(&image)
     }
 
     pub fn from_bytes(
