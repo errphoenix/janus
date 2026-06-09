@@ -9,6 +9,23 @@ pub(crate) mod gl_inner {
         unsafe { INITIALIZED }
     }
 
+    #[macro_export]
+    macro_rules! assert_gl {
+        () => {
+            if !$crate::gl::has_gl_init() {
+                panic!("requested GL operation but context is unavailable")
+            }
+        };
+    }
+
+    #[macro_export]
+    macro_rules! debug_assert_gl {
+        () => {
+            #[cfg(debug_assertions)]
+            $crate::assert_gl!();
+        };
+    }
+
     /// Converts a pointer to a rust string slice.
     ///
     /// # Panics

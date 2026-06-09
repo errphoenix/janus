@@ -3,6 +3,73 @@ use std::path::Path;
 use super::{GlProperty, GpuResource, gl};
 use image::{DynamicImage, ImageError, ImageReader};
 
+const TEXTURE_TARGETS: usize = 3;
+const TEXTURE_UNITS: usize = 6;
+static mut CURRENT_BINDPOINT: u32 = 0;
+static mut BINDING_POINTS: [[u32; TEXTURE_TARGETS]; TEXTURE_UNITS] =
+    [[0u32; TEXTURE_TARGETS]; TEXTURE_UNITS];
+
+pub const fn get_active_unit() -> u32 {
+    unsafe { CURRENT_BINDPOINT }
+}
+
+pub const fn get_bound_texture(target: TextureTarget, unit: u32) -> Option<TextureView> {
+    let unit = crate::gl::TEXTURE0 + unit;
+    let bkeep_i = target.bookkeping_index();
+
+    let id = unsafe { BINDING_POINTS[unit as usize][bkeep_i] };
+    if id != 0 {
+        Some(TextureView { gl_pointer: id })
+    } else {
+        None
+    }
+}
+
+pub fn bind(target: TextureTarget, texture: impl Into<TextureView>, unit: u32) {
+    crate::debug_assert_gl!();
+
+    let texture: TextureView = texture.into();
+    let unit = crate::gl::TEXTURE0 + unit;
+    let bkeep_i = target.bookkeping_index();
+
+    unsafe {
+        if CURRENT_BINDPOINT != unit {
+            crate::gl::ActiveTexture(unit);
+        }
+        if BINDING_POINTS[unit as usize][bkeep_i] != texture.gl_pointer {
+            crate::gl::BindTexture(target.property_enum(), texture.gl_pointer);
+        }
+    }
+
+    unsafe {
+        CURRENT_BINDPOINT = unit;
+        BINDING_POINTS[unit as usize][bkeep_i] = texture.gl_pointer;
+    }
+}
+
+pub fn unbind(target: TextureTarget, unit: u32) {
+    crate::debug_assert_gl!();
+
+    assert!(unit < TEXTURE_UNITS as u32);
+
+    let unit = crate::gl::TEXTURE0 + unit;
+    let bkeep_i = target.bookkeping_index();
+
+    unsafe {
+        if CURRENT_BINDPOINT != unit {
+            crate::gl::ActiveTexture(unit);
+        }
+        if BINDING_POINTS[unit as usize][bkeep_i] != 0 {
+            crate::gl::BindTexture(target.property_enum(), 0);
+        }
+    }
+
+    unsafe {
+        CURRENT_BINDPOINT = unit;
+        BINDING_POINTS[unit as usize][bkeep_i] = 0;
+    }
+}
+
 #[inline(always)]
 fn load_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage, ImageError> {
     ImageReader::open(path)?.with_guessed_format()?.decode()
@@ -152,18 +219,19 @@ impl Texture {
             gl_pointer: self.gl_pointer,
         }
     }
-}
 
-/// A reference to an OpenGL texture.
-///
-/// This is different from [`Texture`] because this does not actually own
-/// the texture resources on the GPU and it has no effects on its lifecycle.
-///
-/// Internally, [`TextureView`] holds a copy to the u32 OpenGL pointer to the
-/// texture resource, thus allowing OpenGL operations.
-#[derive(Clone, Debug, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct TextureView {
-    gl_pointer: u32,
+    pub fn bind(&self, unit: u32) {
+        bind(TextureTarget::Flat, self, unit);
+    }
+
+    pub fn unbind(unit: u32) {
+        unbind(TextureTarget::Flat, unit);
+    }
+
+    pub fn is_bound(&self, unit: u32) -> bool {
+        get_bound_texture(TextureTarget::Flat, unit)
+            .is_some_and(|t| t.gl_pointer == self.gl_pointer)
+    }
 }
 
 impl Drop for Texture {
@@ -181,9 +249,48 @@ impl GpuResource for Texture {
     }
 }
 
+/// A reference to an OpenGL texture.
+///
+/// This is different from [`Texture`] because this does not actually own
+/// the texture resources on the GPU and it has no effects on its lifecycle.
+///
+/// Internally, [`TextureView`] holds a copy to the u32 OpenGL pointer to the
+/// texture resource, thus allowing OpenGL operations.
+#[derive(Clone, Debug, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub struct TextureView {
+    gl_pointer: u32,
+}
+
+impl TextureView {
+    pub const fn of(texture: &Texture) -> Self {
+        Self {
+            gl_pointer: texture.gl_pointer,
+        }
+    }
+
+    pub fn bind(self, unit: u32) {
+        bind(TextureTarget::Flat, self, unit);
+    }
+
+    pub fn unbind(unit: u32) {
+        unbind(TextureTarget::Flat, unit);
+    }
+
+    pub fn is_bound(self, unit: u32) -> bool {
+        get_bound_texture(TextureTarget::Flat, unit)
+            .is_some_and(|t| t.gl_pointer == self.gl_pointer)
+    }
+}
+
 impl GpuResource for TextureView {
     fn resource_id(&self) -> u32 {
         self.gl_pointer
+    }
+}
+
+impl From<&'_ Texture> for TextureView {
+    fn from(value: &'_ Texture) -> Self {
+        value.view()
     }
 }
 
@@ -193,6 +300,16 @@ pub enum TextureTarget {
     Flat,
     Cube,
     Array,
+}
+
+impl TextureTarget {
+    const fn bookkeping_index(self) -> usize {
+        match self {
+            TextureTarget::Flat => 0,
+            TextureTarget::Cube => 1,
+            TextureTarget::Array => 2,
+        }
+    }
 }
 
 impl GlProperty for TextureTarget {
@@ -840,12 +957,6 @@ fn alloc_array(pointer: u32, width: i32, height: i32, layers: i32, format: GlFor
     unsafe {
         gl::BindTexture(gl::TEXTURE_2D_ARRAY, pointer);
         gl::TexStorage3D(gl::TEXTURE_2D_ARRAY, 0, internal, width, height, layers);
-    }
-}
-
-pub fn bind(target: TextureTarget, id: u32) {
-    unsafe {
-        gl::BindTexture(target.property_enum(), id);
     }
 }
 
