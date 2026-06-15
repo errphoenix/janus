@@ -114,7 +114,6 @@ impl<T: Clone + Send + Sync + std::fmt::Debug> Mirror<T> {
     /// The `operation` is called once this mirror instance has ensured
     /// exclusive access to the underlying data.
     pub fn publish_with<F: FnOnce(&mut T)>(&mut self, operation: F) {
-        println!("PUBLISH LOCK ({:?})", self.local);
         self.seq_lock.lock();
 
         operation(&mut self.local);
@@ -127,7 +126,6 @@ impl<T: Clone + Send + Sync + std::fmt::Debug> Mirror<T> {
         }
 
         self.version = self.seq_lock.unlock();
-        println!("PUBLISH UNLOCK ({:?})", self.local);
     }
 
     /// Publish a new `value` to the underlying shared pointer.
