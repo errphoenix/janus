@@ -1,8 +1,11 @@
 pub mod stream;
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 pub use stream::{DeltaPacket, IterInputStream};
@@ -196,6 +199,10 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
         self.snapshot.mouse_wheel()
     }
 
+    pub fn pop_key_event(&mut self) -> Option<KeyEvent> {
+        self.snapshot.keys.pop_key_event()
+    }
+
     pub fn keys(&self) -> &Keys {
         &self.snapshot.keys
     }
@@ -242,23 +249,52 @@ impl InputSnapshot {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum KeyEvent {
+    Mouse { code: u16, release: bool },
+    Keyboard { code: u16, release: bool },
+}
+impl KeyEvent {
+    pub const fn is_mouse(self) -> bool {
+        matches!(self, KeyEvent::Mouse { .. })
+    }
+
+    pub const fn is_keyboard(self) -> bool {
+        matches!(self, KeyEvent::Keyboard { .. })
+    }
+
+    pub const fn code(self) -> u16 {
+        match self {
+            KeyEvent::Mouse { code, .. } => code,
+            KeyEvent::Keyboard { code, .. } => code,
+        }
+    }
+
+    pub const fn is_released(self) -> bool {
+        match self {
+            KeyEvent::Mouse { release, .. } => release,
+            KeyEvent::Keyboard { release, .. } => release,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Keys {
     keyboard: [u16; KEYBOARD_ENTRIES],
     mouse: [u16; MOUSE_ENTRIES],
+    local_key_queue: VecDeque<KeyEvent>,
 }
-
 impl Default for Keys {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl Keys {
     pub fn new() -> Self {
         Self {
             keyboard: [0u16; KEYBOARD_ENTRIES],
             mouse: [0u16; MOUSE_ENTRIES],
+            local_key_queue: VecDeque::new(),
         }
     }
 
@@ -282,30 +318,52 @@ impl Keys {
     pub fn press_change(&mut self, delta: DeltaPacket) {
         match delta {
             DeltaPacket::Keyboard { code, down } => {
-                let code = u16::from(code) as usize;
+                let code = code.0;
+                let index = u16::from(code) as usize;
                 if down {
-                    if self.keyboard[code] == 0 {
-                        self.keyboard[code] = 1;
+                    self.local_key_queue.push_back(KeyEvent::Keyboard {
+                        code,
+                        release: false,
+                    });
+                    if self.keyboard[index] == 0 {
+                        self.keyboard[index] = 1;
                     }
                 } else {
-                    if self.keyboard[code] > 0 && self.keyboard[code] != RELEASE_SIGNAL {
-                        self.keyboard[code] = RELEASE_SIGNAL;
+                    if self.keyboard[index] > 0 && self.keyboard[index] != RELEASE_SIGNAL {
+                        self.local_key_queue.push_back(KeyEvent::Keyboard {
+                            code: code,
+                            release: true,
+                        });
+                        self.keyboard[index] = RELEASE_SIGNAL;
                     }
                 }
             }
             DeltaPacket::Mouse { button, down } => {
-                let code = u16::from(button) as usize;
+                let code = button.0;
+                let index = u16::from(button) as usize;
                 if down {
-                    if self.mouse[code] == 0 {
-                        self.mouse[code] = 1;
+                    self.local_key_queue.push_back(KeyEvent::Mouse {
+                        code: code,
+                        release: false,
+                    });
+                    if self.mouse[index] == 0 {
+                        self.mouse[index] = 1;
                     }
                 } else {
-                    if self.mouse[code] > 0 && self.mouse[code] != RELEASE_SIGNAL {
-                        self.mouse[code] = RELEASE_SIGNAL;
+                    if self.mouse[index] > 0 && self.mouse[index] != RELEASE_SIGNAL {
+                        self.local_key_queue.push_back(KeyEvent::Mouse {
+                            code: code,
+                            release: true,
+                        });
+                        self.mouse[index] = RELEASE_SIGNAL;
                     }
                 }
             }
         }
+    }
+
+    pub fn pop_key_event(&mut self) -> Option<KeyEvent> {
+        self.local_key_queue.pop_back()
     }
 
     #[inline(always)]
