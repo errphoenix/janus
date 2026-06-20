@@ -28,7 +28,10 @@ where
     let _ = ev_loop.run_app(&mut context);
 }
 
-use std::hash::{BuildHasherDefault, Hasher};
+use std::{
+    collections::HashMap,
+    hash::{BuildHasherDefault, Hasher},
+};
 
 #[cfg(feature = "state")]
 use context::{Context, Setup, Update};
@@ -95,27 +98,26 @@ pub const fn hash_string_b(bytes: &[u8]) -> StringHash {
     StringHash(hash)
 }
 
+pub type StringHasher = BuildHasherDefault<StringHash>;
+pub type StringMap<V> = HashMap<StringHash, V, StringHasher>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct StringHash(u64);
-
 impl std::fmt::Display for StringHash {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{:x}", self.0)
     }
 }
-
 impl StringHash {
     pub const fn as_u64(self) -> u64 {
         self.0
     }
 }
-
 impl Into<u64> for StringHash {
     fn into(self) -> u64 {
         self.as_u64()
     }
 }
-
 impl Hasher for StringHash {
     fn finish(&self) -> u64 {
         self.0
@@ -129,5 +131,3 @@ impl Hasher for StringHash {
         self.0 = i;
     }
 }
-
-pub type StringHasher = BuildHasherDefault<StringHash>;
