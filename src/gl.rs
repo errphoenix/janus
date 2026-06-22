@@ -67,6 +67,7 @@ pub(crate) mod gl_inner {
 }
 
 pub static mut GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT: i32 = 0;
+pub static mut GL_TEXTURE_ARRAY_MAX_LAYERS: i32 = 0;
 
 pub fn align_to_gl_ssbo(value: i32) -> i32 {
     let ssbo_align = unsafe { GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT };

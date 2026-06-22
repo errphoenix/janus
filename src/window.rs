@@ -377,10 +377,23 @@ fn load_gl_symbols<D: GlDisplay>(display: &D) {
             );
             crate::gl::GL_SHADER_STORAGE_BUFFER_OFFSET_ALIGNMENT
         };
+        let max_array_texture_layers = unsafe {
+            gl::GetIntegerv(
+                gl::MAX_ARRAY_TEXTURE_LAYERS,
+                &raw mut crate::gl::GL_TEXTURE_ARRAY_MAX_LAYERS,
+            );
+            crate::gl::GL_TEXTURE_ARRAY_MAX_LAYERS
+        };
+
         event!(
             name: "gl.info.ssbo_alignment_offset",
             Level::INFO,
             "[expose_gl] OpenGL Shader Storage alignment offset: {gl_alignment}"
+        );
+        event!(
+            name: "gl.info.texture-array_max_layers",
+            Level::INFO,
+            "[expose_gl] OpenGL Array Texture max layers: {max_array_texture_layers}"
         );
     }
 }
