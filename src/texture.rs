@@ -13,6 +13,11 @@ pub const fn get_active_unit() -> u32 {
     unsafe { CURRENT_BINDPOINT }
 }
 
+/// Get the possibly bound [`TextureView`] for the `target` at the given `unit`.
+///
+/// Note that if the texture has been bound with [`bind_without_meta`], the
+/// texture's metadata will not be preserved, other than the OpenGL texture
+/// object.
 pub const fn get_bound_texture(target: TextureTarget, unit: u32) -> Option<TextureView> {
     let unit = crate::gl::TEXTURE0 + unit;
     let bkeep_i = target.bookkeping_index();
@@ -22,6 +27,42 @@ pub const fn get_bound_texture(target: TextureTarget, unit: u32) -> Option<Textu
         Some(texture)
     } else {
         None
+    }
+}
+
+/// Binds the given `texture` only by OpenGL state.
+///
+/// This will store a [`TextureView`] without metadata, only preserving the
+/// OpenGL texture object `gl_pointer` field.
+pub fn bind_without_meta(target: TextureTarget, texture: impl Into<TextureKey>, unit: u32) {
+    crate::debug_assert_gl!();
+
+    let texture: TextureKey = texture.into();
+    let unit = crate::gl::TEXTURE0 + unit;
+    let bkeep_i = target.bookkeping_index();
+
+    unsafe {
+        if CURRENT_BINDPOINT != unit {
+            crate::gl::ActiveTexture(unit);
+        }
+        if BINDING_POINTS[unit as usize][bkeep_i].gl_pointer != texture.0 {
+            crate::gl::BindTexture(target.property_enum(), texture.0);
+        }
+    }
+
+    let dummy = TextureView {
+        gl_pointer: texture.0,
+        gl_format: GlFormat {
+            internal: 0,
+            format: 0,
+            data_type: 0,
+        },
+        size: (1, 1),
+    };
+
+    unsafe {
+        CURRENT_BINDPOINT = unit;
+        BINDING_POINTS[unit as usize][bkeep_i] = dummy;
     }
 }
 
@@ -260,6 +301,20 @@ impl Drop for Texture {
 impl GpuResource for Texture {
     fn resource_id(&self) -> u32 {
         self.gl_pointer
+    }
+}
+
+/// A direct abstraction of an OpenGL texture object.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TextureKey(pub u32);
+impl From<TextureView> for TextureKey {
+    fn from(value: TextureView) -> Self {
+        Self(value.resource_id())
+    }
+}
+impl From<Texture> for TextureKey {
+    fn from(value: Texture) -> Self {
+        Self(value.resource_id())
     }
 }
 
