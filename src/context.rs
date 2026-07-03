@@ -270,6 +270,8 @@ where
                         state.update(delta.delta_step());
                         iter += 1;
                     }
+                    state.finish_frame();
+
                     if delta.step() > delta.accumulated() {
                         let ahead = delta.time_ahead();
                         std::thread::sleep(ahead * 3 / 4);
@@ -479,6 +481,14 @@ pub trait Update {
     /// [`update cycle`]: Update::update
     /// [`delta accumulation`]: DeltaAccumulator
     fn new_frame(&mut self, _frame_delta: DeltaTime);
+
+    /// Finishing logic for the frame.
+    ///
+    /// This is run after the application's delta-accumulated [`update cycle`]
+    /// has ended.
+    ///
+    /// [`update cycle`]: Update::update
+    fn finish_frame(&mut self);
 }
 
 #[cfg(feature = "render")]
@@ -513,6 +523,8 @@ impl Update for EmptyRoutine {
     }
 
     fn new_frame(&mut self, _frame_delta: DeltaTime) {}
+
+    fn finish_frame(&mut self) {}
 }
 
 #[cfg(feature = "render")]
