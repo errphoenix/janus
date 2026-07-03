@@ -260,7 +260,7 @@ where
 
                 let mut iter = 0;
                 loop {
-                    state.new_frame();
+                    state.new_frame(delta.cycle.delta());
 
                     delta.accum();
                     while delta.overstep() {
@@ -478,7 +478,7 @@ pub trait Update {
     ///
     /// [`update cycle`]: Update::update
     /// [`delta accumulation`]: DeltaAccumulator
-    fn new_frame(&mut self) {}
+    fn new_frame(&mut self, _frame_delta: DeltaTime);
 }
 
 #[cfg(feature = "render")]
@@ -511,6 +511,8 @@ impl Update for EmptyRoutine {
     fn step_duration(&self) -> Duration {
         Duration::default()
     }
+
+    fn new_frame(&mut self, _frame_delta: DeltaTime) {}
 }
 
 #[cfg(feature = "render")]
