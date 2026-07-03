@@ -101,6 +101,7 @@ pub const fn hash_string_b(bytes: &[u8]) -> StringHash {
 pub type StringHasher = BuildHasherDefault<StringHash>;
 pub type StringMap<V> = HashMap<StringHash, V, StringHasher>;
 
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct StringHash(u64);
 impl std::fmt::Display for StringHash {
