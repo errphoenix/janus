@@ -19,7 +19,6 @@ pub const fn get_active_unit() -> u32 {
 /// texture's metadata will not be preserved, other than the OpenGL texture
 /// object.
 pub const fn get_bound_texture(target: TextureTarget, unit: u32) -> Option<TextureView> {
-    let unit = crate::gl::TEXTURE0 + unit;
     let bkeep_i = target.bookkeping_index();
 
     let texture = unsafe { BINDING_POINTS[unit as usize][bkeep_i] };
@@ -38,12 +37,10 @@ pub fn bind_without_meta(target: TextureTarget, texture: impl Into<TextureKey>, 
     crate::debug_assert_gl!();
 
     let texture: TextureKey = texture.into();
-    let unit = crate::gl::TEXTURE0 + unit;
     let bkeep_i = target.bookkeping_index();
-
     unsafe {
         if CURRENT_BINDPOINT != unit {
-            crate::gl::ActiveTexture(unit);
+            crate::gl::ActiveTexture(crate::gl::TEXTURE0 + unit);
         }
         if BINDING_POINTS[unit as usize][bkeep_i].gl_pointer != texture.0 {
             crate::gl::BindTexture(target.property_enum(), texture.0);
@@ -70,12 +67,11 @@ pub fn bind(target: TextureTarget, texture: impl Into<TextureView>, unit: u32) {
     crate::debug_assert_gl!();
 
     let texture: TextureView = texture.into();
-    let unit = crate::gl::TEXTURE0 + unit;
     let bkeep_i = target.bookkeping_index();
 
     unsafe {
         if CURRENT_BINDPOINT != unit {
-            crate::gl::ActiveTexture(unit);
+            crate::gl::ActiveTexture(crate::gl::TEXTURE0 + unit);
         }
         if BINDING_POINTS[unit as usize][bkeep_i] != texture {
             crate::gl::BindTexture(target.property_enum(), texture.gl_pointer);
@@ -92,13 +88,11 @@ pub fn unbind(target: TextureTarget, unit: u32) {
     crate::debug_assert_gl!();
 
     assert!(unit < TEXTURE_UNITS as u32);
-
-    let unit = crate::gl::TEXTURE0 + unit;
     let bkeep_i = target.bookkeping_index();
 
     unsafe {
         if CURRENT_BINDPOINT != unit {
-            crate::gl::ActiveTexture(unit);
+            crate::gl::ActiveTexture(crate::gl::TEXTURE0 + unit);
         }
         if !BINDING_POINTS[unit as usize][bkeep_i].is_null() {
             crate::gl::BindTexture(target.property_enum(), 0);
