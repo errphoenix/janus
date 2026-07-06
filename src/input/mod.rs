@@ -251,8 +251,16 @@ impl InputSnapshot {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum KeyEvent {
-    Mouse { code: u16, release: bool },
-    Keyboard { code: u16, release: bool },
+    Mouse {
+        code: u16,
+        release: bool,
+        press_time: u32,
+    },
+    Keyboard {
+        code: u16,
+        release: bool,
+        press_time: u32,
+    },
 }
 impl KeyEvent {
     pub const fn is_mouse(self) -> bool {
@@ -280,7 +288,9 @@ impl KeyEvent {
 
 #[derive(Clone, Debug)]
 pub struct Keys {
+    /// index is represented by key id, value is held frames
     keyboard: [u16; KEYBOARD_ENTRIES],
+    /// index is represented by button id, value is held frames
     mouse: [u16; MOUSE_ENTRIES],
     local_key_queue: VecDeque<KeyEvent>,
 }
@@ -321,20 +331,22 @@ impl Keys {
                 let code = code.0;
                 let index = u16::from(code) as usize;
                 if down {
-                    self.local_key_queue.push_back(KeyEvent::Keyboard {
-                        code,
-                        release: false,
-                    });
                     if self.keyboard[index] == 0 {
                         self.keyboard[index] = 1;
                     }
+                    self.local_key_queue.push_back(KeyEvent::Keyboard {
+                        code,
+                        release: false,
+                        press_time: self.keyboard[index] as u32,
+                    });
                 } else {
                     if self.keyboard[index] > 0 && self.keyboard[index] != RELEASE_SIGNAL {
+                        self.keyboard[index] = RELEASE_SIGNAL;
                         self.local_key_queue.push_back(KeyEvent::Keyboard {
                             code: code,
                             release: true,
+                            press_time: self.keyboard[index] as u32,
                         });
-                        self.keyboard[index] = RELEASE_SIGNAL;
                     }
                 }
             }
@@ -342,20 +354,22 @@ impl Keys {
                 let code = button.0;
                 let index = u16::from(button) as usize;
                 if down {
-                    self.local_key_queue.push_back(KeyEvent::Mouse {
-                        code: code,
-                        release: false,
-                    });
                     if self.mouse[index] == 0 {
                         self.mouse[index] = 1;
                     }
+                    self.local_key_queue.push_back(KeyEvent::Mouse {
+                        code: code,
+                        release: false,
+                        press_time: self.mouse[index] as u32,
+                    });
                 } else {
                     if self.mouse[index] > 0 && self.mouse[index] != RELEASE_SIGNAL {
+                        self.mouse[index] = RELEASE_SIGNAL;
                         self.local_key_queue.push_back(KeyEvent::Mouse {
                             code: code,
                             release: true,
+                            press_time: self.mouse[index] as u32,
                         });
-                        self.mouse[index] = RELEASE_SIGNAL;
                     }
                 }
             }
