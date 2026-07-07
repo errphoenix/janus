@@ -677,10 +677,12 @@ impl ImageType {
             Bits10 if alpha => gl::UNSIGNED_INT_10_10_10_2,
 
             Bits332 => gl::UNSIGNED_BYTE_3_3_2,
-            SingleBit | Bits2PackedByte1 | Bits4PackedByte2 | Bits8Linear | Bits8Snorm | Bits4
-            | Bits5 | Bits8 => gl::UNSIGNED_BYTE,
+            SingleBit | Bits2PackedByte1 | Bits4PackedByte2 | Bits8Linear | Bits4 | Bits5
+            | Bits8 => gl::UNSIGNED_BYTE,
 
-            Bits16Snorm | Bits16 | Bits12 => gl::UNSIGNED_SHORT,
+            Bits16Snorm | Bits8Snorm => gl::BYTE,
+
+            Bits16 | Bits12 => gl::UNSIGNED_SHORT,
             Bits10 | Bits24 => gl::UNSIGNED_INT,
             Bits9Shared5 => gl::UNSIGNED_INT_5_9_9_9_REV,
 
@@ -822,7 +824,7 @@ fn choose_gl_format(format: ImageFormat, pixel: ImageType) -> GlFormat {
             Bits8Snorm => gl::RGB8_SNORM,
             wrong => invalid(wrong, format),
         },
-        ImageFormat::RgbaSnorm16 | ImageFormat::RgbSnorm16 => match pixel {
+        ImageFormat::RgbaSnorm16 => match pixel {
             Bits16Snorm => gl::RGBA16_SNORM,
             wrong => invalid(wrong, format),
         },
