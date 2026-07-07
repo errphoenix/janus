@@ -537,6 +537,10 @@ pub enum ImageFormat {
     Depth,
     Stencil,
     DepthStencil,
+    RgbSnorm8,
+    RgbaSnorm8,
+    RgbSnorm16,
+    RgbaSnorm16,
 }
 impl GlProperty for ImageFormat {
     fn property_enum(self) -> u32 {
@@ -546,7 +550,10 @@ impl GlProperty for ImageFormat {
 impl ImageFormat {
     pub const fn has_alpha(&self) -> bool {
         use ImageFormat::*;
-        matches!(self, Rgba | Bgra | RgbaInteger | BgraInteger)
+        matches!(
+            self,
+            Rgba | Bgra | RgbaInteger | BgraInteger | RgbaSnorm8 | RgbaSnorm16
+        )
     }
 
     pub const fn to_gl_format(self) -> u32 {
@@ -559,6 +566,11 @@ impl ImageFormat {
             Rgba => gl::RGBA,
             Bgr => gl::BGR,
             Bgra => gl::BGRA,
+
+            RgbSnorm8 => gl::RGB8_SNORM,
+            RgbaSnorm8 => gl::RGBA8_SNORM,
+            RgbSnorm16 => gl::RGB16_SNORM,
+            RgbaSnorm16 => gl::RGBA16_SNORM,
 
             SingleChannelInteger => gl::RED_INTEGER,
             DualChannelInteger => gl::RG_INTEGER,
@@ -800,6 +812,14 @@ fn choose_gl_format(format: ImageFormat, pixel: ImageType) -> GlFormat {
         ImageFormat::DepthStencil => match pixel {
             Bits24 => gl::DEPTH24_STENCIL8,
             Float32 => gl::DEPTH32F_STENCIL8,
+            wrong => invalid(wrong, format),
+        },
+        ImageFormat::RgbaSnorm8 | ImageFormat::RgbSnorm8 => match pixel {
+            Bits8Snorm => gl::R8_SNORM,
+            wrong => invalid(wrong, format),
+        },
+        ImageFormat::RgbaSnorm16 | ImageFormat::RgbSnorm16 => match pixel {
+            Bits16Snorm => gl::R8_SNORM,
             wrong => invalid(wrong, format),
         },
     };
