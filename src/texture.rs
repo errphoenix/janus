@@ -850,10 +850,6 @@ fn create() -> u32 {
 }
 
 /// Uploads a 2D texture to the GPU using `glTexImage2D`.
-///
-/// After upload the texture is not unbound, allowing the caller to set
-/// parameters using `glTexParameterX` right after this call without having
-/// to re-bind the texture.
 fn upload_bytes_2d(width: i32, height: i32, data: &[u8], format: GlFormat) {
     let internal = format.internal;
     let data_type = format.data_type;
