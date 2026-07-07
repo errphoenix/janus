@@ -814,12 +814,20 @@ fn choose_gl_format(format: ImageFormat, pixel: ImageType) -> GlFormat {
             Float32 => gl::DEPTH32F_STENCIL8,
             wrong => invalid(wrong, format),
         },
-        ImageFormat::RgbaSnorm8 | ImageFormat::RgbSnorm8 => match pixel {
-            Bits8Snorm => gl::R8_SNORM,
+        ImageFormat::RgbaSnorm8 => match pixel {
+            Bits8Snorm => gl::RGBA8_SNORM,
+            wrong => invalid(wrong, format),
+        },
+        ImageFormat::RgbSnorm8 => match pixel {
+            Bits8Snorm => gl::RGB8_SNORM,
             wrong => invalid(wrong, format),
         },
         ImageFormat::RgbaSnorm16 | ImageFormat::RgbSnorm16 => match pixel {
-            Bits16Snorm => gl::R8_SNORM,
+            Bits16Snorm => gl::RGBA16_SNORM,
+            wrong => invalid(wrong, format),
+        },
+        ImageFormat::RgbSnorm16 => match pixel {
+            Bits16Snorm => gl::RGB16_SNORM,
             wrong => invalid(wrong, format),
         },
     };
