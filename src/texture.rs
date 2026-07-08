@@ -4,7 +4,7 @@ use super::{GlProperty, GpuResource, gl};
 use image::{DynamicImage, ImageError, ImageReader};
 
 const TEXTURE_TARGETS: usize = 3;
-const TEXTURE_UNITS: usize = 6;
+const TEXTURE_UNITS: usize = 16;
 static mut CURRENT_BINDPOINT: u32 = 0;
 static mut BINDING_POINTS: [[TextureView; TEXTURE_TARGETS]; TEXTURE_UNITS] =
     [[TextureView::null(); TEXTURE_TARGETS]; TEXTURE_UNITS];
