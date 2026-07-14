@@ -15,7 +15,7 @@ tracing = "0.1.44"
 winit = { version = "0.30.12", optional = true }
 
 [features]
-default = ["state"]
+default = ["state", "render", "input"]
 state = []
 render = ["dep:glutin", "dep:glutin-winit", "dep:winit"]
 input = ["render"]
