@@ -417,6 +417,30 @@ impl DeltaCycle {
 pub struct DeltaTime(f64);
 
 impl DeltaTime {
+    pub const fn as_millis_f64(&self) -> f64 {
+        self.0 * 1000.0
+    }
+
+    pub const fn as_millis(&self) -> f32 {
+        (self.0 * 1000.0) as f32
+    }
+
+    pub const fn as_macros_f64(&self) -> f64 {
+        self.as_millis_f64() * 1000.0
+    }
+
+    pub const fn as_macros(&self) -> f32 {
+        (self.as_millis() * 1000.0) as f32
+    }
+
+    pub const fn as_nanos_f64(&self) -> f64 {
+        self.as_macros_f64() * 1000.0
+    }
+
+    pub const fn as_nanos(&self) -> f32 {
+        (self.as_macros() * 1000.0) as f32
+    }
+
     pub const fn as_f32(&self) -> f32 {
         self.0 as f32
     }
