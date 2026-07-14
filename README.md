@@ -1,5 +1,5 @@
 # Janus
-[![Crates.io]](https://img.shields.io/badge/crates.io-private--internal-blue)
+[![Crates.io](https://img.shields.io/badge/crates.io-private--internal-blue)]()
 
 **Minimal, low-overhead OpenGL application context and input manager with cross-thread synchronization in Rust**
 
