@@ -273,11 +273,7 @@ where
                     state.finish_frame();
 
                     if delta.step() > delta.accumulated() {
-                        let ahead = delta.time_ahead();
-                        std::thread::sleep(ahead * 3 / 4);
-
-                        // todo: test/bench
-                        //std::thread::yield_now();
+                        std::thread::yield_now();
                     }
                     iter = 0;
                 }
