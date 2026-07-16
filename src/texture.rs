@@ -325,6 +325,11 @@ pub struct TextureView {
     gl_format: GlFormat,
     size: (i32, i32),
 }
+impl Default for TextureView {
+    fn default() -> Self {
+        Self::null()
+    }
+}
 impl TextureView {
     const fn null() -> Self {
         Self {
