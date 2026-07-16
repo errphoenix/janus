@@ -147,3 +147,6 @@ fn initialize(state: &mut ImState, render: &mut ImRender) -> Result<(), &'static
 }
 
 ```
+
+## License
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
