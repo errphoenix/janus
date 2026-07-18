@@ -257,6 +257,56 @@ impl Texture {
         }
     }
 
+    /// Create an empty texture.
+    ///
+    /// This simply upload a null pointer to `glTexImage2D`, requiring no
+    /// allocations on the CPU side.
+    pub fn empty(width: i32, height: i32, pixel: ImageType, format: ImageFormat) -> Self {
+        let gl_format = choose_gl_format(format, pixel);
+
+        let id = create();
+        bind(
+            TextureTarget::Flat,
+            TextureView {
+                gl_pointer: id,
+                gl_format,
+                size: (width, height),
+            },
+            0,
+        );
+
+        {
+            let internal = gl_format.internal;
+            let data_type = gl_format.data_type;
+            let format = gl_format.format;
+
+            unsafe {
+                gl::TexImage2D(
+                    gl::TEXTURE_2D,
+                    0,
+                    internal as i32,
+                    width,
+                    height,
+                    0,
+                    format,
+                    data_type,
+                    std::ptr::null(),
+                );
+            }
+        }
+
+        Self {
+            gl_pointer: id,
+            metadata: ImageMetadata {
+                width,
+                height,
+                format,
+                pixel,
+                gl_format,
+            },
+        }
+    }
+
     pub fn view(&self) -> TextureView {
         TextureView {
             gl_pointer: self.gl_pointer,
