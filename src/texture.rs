@@ -393,7 +393,7 @@ impl TextureView {
         }
     }
 
-    const fn is_null(&self) -> bool {
+    pub const fn is_null(&self) -> bool {
         self.gl_pointer == 0
     }
 
@@ -403,6 +403,10 @@ impl TextureView {
             gl_format: texture.metadata.gl_format,
             size: (texture.metadata.width, texture.metadata.height),
         }
+    }
+
+    pub fn size(&self) -> (i32, i32) {
+        self.size
     }
 
     pub fn bind(self, unit: u32) {
