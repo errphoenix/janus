@@ -3,11 +3,11 @@ use std::path::Path;
 use super::{GlProperty, GpuResource, gl};
 use image::{DynamicImage, ImageError, ImageReader};
 
-const TEXTURE_TARGETS: usize = 3;
+const TEXTURE_TARGETS: usize = 5;
 const TEXTURE_UNITS: usize = 16;
 static mut CURRENT_BINDPOINT: u32 = 0;
 static mut BINDING_POINTS: [[TextureView; TEXTURE_TARGETS]; TEXTURE_UNITS] =
-    [[TextureView::null(); TEXTURE_TARGETS]; TEXTURE_UNITS];
+    [[TextureView::null(TextureKind::Dim2D); TEXTURE_TARGETS]; TEXTURE_UNITS];
 
 pub const fn get_active_unit() -> u32 {
     unsafe { CURRENT_BINDPOINT }
@@ -18,7 +18,7 @@ pub const fn get_active_unit() -> u32 {
 /// Note that if the texture has been bound with [`bind_without_meta`], the
 /// texture's metadata will not be preserved, other than the OpenGL texture
 /// object.
-pub const fn get_bound_texture(target: TextureTarget, unit: u32) -> Option<TextureView> {
+pub const fn get_bound_texture(target: TextureKind, unit: u32) -> Option<TextureView> {
     let bkeep_i = target.bookkeping_index();
 
     let texture = unsafe { BINDING_POINTS[unit as usize][bkeep_i] };
@@ -33,7 +33,7 @@ pub const fn get_bound_texture(target: TextureTarget, unit: u32) -> Option<Textu
 ///
 /// This will store a [`TextureView`] without metadata, only preserving the
 /// OpenGL texture object `gl_pointer` field.
-pub fn bind_without_meta(target: TextureTarget, texture: impl Into<TextureKey>, unit: u32) {
+pub fn bind_without_meta(target: TextureKind, texture: impl Into<TextureKey>, unit: u32) {
     crate::debug_assert_gl!();
 
     let texture: TextureKey = texture.into();
@@ -47,26 +47,17 @@ pub fn bind_without_meta(target: TextureTarget, texture: impl Into<TextureKey>, 
         }
     }
 
-    let dummy = TextureView {
-        gl_pointer: texture.0,
-        gl_format: GlFormat {
-            internal: 0,
-            format: 0,
-            data_type: 0,
-        },
-        size: (1, 1),
-    };
-
+    let dummy = TextureView::null(target);
     unsafe {
         CURRENT_BINDPOINT = unit;
         BINDING_POINTS[unit as usize][bkeep_i] = dummy;
     }
 }
 
-pub fn bind(target: TextureTarget, texture: impl Into<TextureView>, unit: u32) {
+pub fn bind(target: TextureKind, texture: impl AsTexView, unit: u32) {
     crate::debug_assert_gl!();
 
-    let texture: TextureView = texture.into();
+    let texture = texture.as_texture_view();
     let bkeep_i = target.bookkeping_index();
 
     unsafe {
@@ -84,7 +75,7 @@ pub fn bind(target: TextureTarget, texture: impl Into<TextureView>, unit: u32) {
     }
 }
 
-pub fn unbind(target: TextureTarget, unit: u32) {
+pub fn unbind(target: TextureKind, unit: u32) {
     crate::debug_assert_gl!();
 
     assert!(unit < TEXTURE_UNITS as u32);
@@ -101,19 +92,13 @@ pub fn unbind(target: TextureTarget, unit: u32) {
 
     unsafe {
         CURRENT_BINDPOINT = unit;
-        BINDING_POINTS[unit as usize][bkeep_i] = TextureView::null();
+        BINDING_POINTS[unit as usize][bkeep_i] = TextureView::null(target);
     }
 }
 
 #[inline(always)]
 fn load_image<P: AsRef<Path>>(path: P) -> Result<DynamicImage, ImageError> {
     ImageReader::open(path)?.with_guessed_format()?.decode()
-}
-
-#[inline(always)]
-fn read_image_data<P: AsRef<Path>>(path: P) -> Result<Box<[u8]>, ImageError> {
-    let decoded = load_image(path)?;
-    Ok(decoded.as_bytes().into())
 }
 
 #[non_exhaustive]
@@ -183,10 +168,10 @@ impl Textures {
 #[derive(Debug, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct Texture {
     gl_pointer: u32,
-    pub metadata: ImageMetadata,
+    metadata: TextureMetadata,
 }
 impl Texture {
-    pub fn from_image(image: &DynamicImage) -> Result<Self, TextureError> {
+    pub fn from_2d_image(image: &DynamicImage, mip_levels: i32) -> Result<Self, TextureError> {
         let (bytes, w, h, (px, fmt)) = {
             let bytes: Box<[u8]> = image.as_bytes().into();
             let width = image.width() as i32;
@@ -217,121 +202,167 @@ impl Texture {
             (bytes, width, height, (pixel, format))
         };
 
-        Ok(Self::from_bytes(w, h, &bytes, px, fmt))
+        let texture = Self::new_2d(w, h, mip_levels, px, fmt);
+        texture.upload_2d_whole(0, &bytes).expect("texture is 2d");
+        Ok(texture)
     }
 
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self, TextureError> {
+    pub fn from_2d_image_file(
+        path: impl AsRef<Path>,
+        mip_levels: i32,
+    ) -> Result<Self, TextureError> {
         let image = load_image(path).map_err(TextureError::ImageLoadError)?;
-        Self::from_image(&image)
+        Self::from_2d_image(&image, mip_levels)
     }
 
-    pub fn from_bytes(
+    pub fn new(
+        kind: TextureKind,
         width: i32,
         height: i32,
-        bytes: &[u8],
+        layers: i32,
+        mip_levels: i32,
         pixel: ImageType,
         format: ImageFormat,
     ) -> Self {
+        if kind == TextureKind::Dim2D {
+            assert_eq!(layers, 1, "2d texture must have exactly one layer");
+        } else if kind == TextureKind::CubeMap {
+            assert_eq!(layers, 6, "cubemap texture must have exactly 6 layers");
+        } else if kind == TextureKind::CubeMapArray {
+            assert_eq!(
+                layers % 6,
+                0,
+                "cubemap array texture must have a multiple of 6 layers"
+            );
+        }
+
         let gl_format = choose_gl_format(format, pixel);
         let id = create();
-        bind(
-            TextureTarget::Flat,
-            TextureView {
-                gl_pointer: id,
-                gl_format,
-                size: (width, height),
-            },
-            0,
+        allocate_texture(
+            id,
+            kind,
+            width,
+            height,
+            layers,
+            mip_levels,
+            gl_format.internal,
         );
-        upload_bytes_2d(width, height, bytes, gl_format);
+
+        let metadata = TextureMetadata {
+            width,
+            height,
+            format,
+            pixel,
+            gl_format,
+            kind,
+            layers,
+            mip_levels,
+        };
 
         Self {
             gl_pointer: id,
-            metadata: ImageMetadata {
-                width,
-                height,
-                format,
-                pixel,
-                gl_format,
-            },
+            metadata,
         }
     }
 
-    /// Create an empty texture.
-    ///
-    /// This simply upload a null pointer to `glTexImage2D`, requiring no
-    /// allocations on the CPU side.
-    pub fn empty(width: i32, height: i32, pixel: ImageType, format: ImageFormat) -> Self {
-        let gl_format = choose_gl_format(format, pixel);
-
-        let id = create();
-        bind(
-            TextureTarget::Flat,
-            TextureView {
-                gl_pointer: id,
-                gl_format,
-                size: (width, height),
-            },
-            0,
-        );
-
-        {
-            let internal = gl_format.internal;
-            let data_type = gl_format.data_type;
-            let format = gl_format.format;
-
-            unsafe {
-                gl::TexImage2D(
-                    gl::TEXTURE_2D,
-                    0,
-                    internal as i32,
-                    width,
-                    height,
-                    0,
-                    format,
-                    data_type,
-                    std::ptr::null(),
-                );
-            }
-        }
-
-        Self {
-            gl_pointer: id,
-            metadata: ImageMetadata {
-                width,
-                height,
-                format,
-                pixel,
-                gl_format,
-            },
-        }
+    pub fn new_2d(
+        width: i32,
+        height: i32,
+        mip_levels: i32,
+        pixel: ImageType,
+        format: ImageFormat,
+    ) -> Self {
+        Self::new(
+            TextureKind::Dim2D,
+            width,
+            height,
+            1,
+            mip_levels,
+            pixel,
+            format,
+        )
     }
 
-    pub fn view(&self) -> TextureView {
+    pub fn new_array(
+        width: i32,
+        height: i32,
+        layers: i32,
+        mip_levels: i32,
+        pixel: ImageType,
+        format: ImageFormat,
+    ) -> Self {
+        Self::new(
+            TextureKind::Dim2DArray,
+            width,
+            height,
+            layers,
+            mip_levels,
+            pixel,
+            format,
+        )
+    }
+
+    pub fn new_3d(
+        width: i32,
+        height: i32,
+        depth: i32,
+        mip_levels: i32,
+        pixel: ImageType,
+        format: ImageFormat,
+    ) -> Self {
+        Self::new(
+            TextureKind::Dim3D,
+            width,
+            height,
+            depth,
+            mip_levels,
+            pixel,
+            format,
+        )
+    }
+
+    pub fn new_cubemap(
+        width: i32,
+        height: i32,
+        mip_levels: i32,
+        pixel: ImageType,
+        format: ImageFormat,
+    ) -> Self {
+        Self::new(
+            TextureKind::CubeMap,
+            width,
+            height,
+            6,
+            mip_levels,
+            pixel,
+            format,
+        )
+    }
+
+    pub fn new_cubemap_array(
+        width: i32,
+        height: i32,
+        num_cubemaps: i32,
+        mip_levels: i32,
+        pixel: ImageType,
+        format: ImageFormat,
+    ) -> Self {
+        Self::new(
+            TextureKind::CubeMapArray,
+            width,
+            height,
+            num_cubemaps * 6,
+            mip_levels,
+            pixel,
+            format,
+        )
+    }
+
+    pub const fn view(&self) -> TextureView {
         TextureView {
             gl_pointer: self.gl_pointer,
-            gl_format: self.metadata.gl_format,
-            size: (self.metadata.width, self.metadata.height),
+            metadata: self.metadata,
         }
-    }
-
-    pub fn bind(&self, unit: u32) {
-        bind(TextureTarget::Flat, self, unit);
-    }
-
-    pub fn unbind(unit: u32) {
-        unbind(TextureTarget::Flat, unit);
-    }
-
-    pub fn is_bound(&self, unit: u32) -> bool {
-        get_bound_texture(TextureTarget::Flat, unit)
-            .is_some_and(|t| t.gl_pointer == self.gl_pointer)
-    }
-
-    pub fn upload_region(&self, x: i32, y: i32, w: i32, h: i32, data: &[u8]) {
-        let x = x.min(self.metadata.width);
-        let y = y.min(self.metadata.height);
-        sub_upload_bytes_2d(x, y, w, h, data, self.metadata.gl_format);
     }
 }
 impl Drop for Texture {
@@ -345,6 +376,15 @@ impl Drop for Texture {
 impl GpuResource for Texture {
     fn resource_id(&self) -> u32 {
         self.gl_pointer
+    }
+}
+impl Tex for Texture {
+    fn target_kind(&self) -> TextureKind {
+        self.metadata.kind
+    }
+
+    fn metadata(&self) -> TextureMetadata {
+        self.metadata
     }
 }
 
@@ -372,24 +412,13 @@ impl From<Texture> for TextureKey {
 #[derive(Clone, Debug, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
 pub struct TextureView {
     gl_pointer: u32,
-    gl_format: GlFormat,
-    size: (i32, i32),
-}
-impl Default for TextureView {
-    fn default() -> Self {
-        Self::null()
-    }
+    metadata: TextureMetadata,
 }
 impl TextureView {
-    const fn null() -> Self {
+    pub const fn null(kind: TextureKind) -> Self {
         Self {
             gl_pointer: 0,
-            gl_format: GlFormat {
-                internal: 0,
-                format: 0,
-                data_type: 0,
-            },
-            size: (0, 0),
+            metadata: TextureMetadata::null(kind),
         }
     }
 
@@ -400,32 +429,17 @@ impl TextureView {
     pub const fn of(texture: &Texture) -> Self {
         Self {
             gl_pointer: texture.gl_pointer,
-            gl_format: texture.metadata.gl_format,
-            size: (texture.metadata.width, texture.metadata.height),
+            metadata: texture.metadata,
         }
     }
-
-    pub fn size(&self) -> (i32, i32) {
-        self.size
+}
+impl Tex for TextureView {
+    fn target_kind(&self) -> TextureKind {
+        self.metadata.kind
     }
 
-    pub fn bind(self, unit: u32) {
-        bind(TextureTarget::Flat, self, unit);
-    }
-
-    pub fn unbind(unit: u32) {
-        unbind(TextureTarget::Flat, unit);
-    }
-
-    pub fn is_bound(self, unit: u32) -> bool {
-        get_bound_texture(TextureTarget::Flat, unit)
-            .is_some_and(|t| t.gl_pointer == self.gl_pointer)
-    }
-
-    pub fn upload_region(&self, x: i32, y: i32, w: i32, h: i32, data: &[u8]) {
-        let x = x.min(self.size.0);
-        let y = y.min(self.size.1);
-        sub_upload_bytes_2d(x, y, w, h, data, self.gl_format);
+    fn metadata(&self) -> TextureMetadata {
+        self.metadata
     }
 }
 impl GpuResource for TextureView {
@@ -439,42 +453,243 @@ impl From<&'_ Texture> for TextureView {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, Default)]
-pub enum TextureTarget {
-    #[default]
-    Flat,
-    Cube,
-    Array,
+pub trait AsTexView {
+    fn as_texture_view(&self) -> TextureView;
 }
-impl TextureTarget {
+impl AsTexView for TextureView {
+    fn as_texture_view(&self) -> TextureView {
+        *self
+    }
+}
+impl AsTexView for Texture {
+    fn as_texture_view(&self) -> TextureView {
+        self.view()
+    }
+}
+
+pub trait Tex: GpuResource + AsTexView {
+    fn target_kind(&self) -> TextureKind;
+    fn metadata(&self) -> TextureMetadata;
+
+    fn size(&self) -> (i32, i32) {
+        (self.metadata().width, self.metadata().height)
+    }
+
+    fn texture_id(&self) -> u32 {
+        self.resource_id()
+    }
+
+    fn is_null(&self) -> bool {
+        self.texture_id() == 0
+    }
+
+    fn bind(&self, unit: u32) {
+        bind(self.target_kind(), self.as_texture_view(), unit);
+    }
+
+    fn unbind(&self, unit: u32) {
+        unbind(self.target_kind(), unit);
+    }
+
+    fn is_bound(&self, unit: u32) -> bool {
+        get_bound_texture(self.target_kind(), unit)
+            .is_some_and(|t| t.gl_pointer == self.texture_id())
+    }
+
+    fn upload_slice(
+        &self,
+        mip_level: i32,
+        x: i32,
+        y: i32,
+        z: i32,
+        w: i32,
+        h: i32,
+        d: i32,
+        data: &[u8],
+    ) -> Result<(), TextureUploadParamsError> {
+        let meta = self.metadata();
+        let x = x.min(meta.width);
+        let y = y.min(meta.height);
+
+        // this is done before clamping z, because an invalid layer index or
+        // span may indicate an serious mismatch between the caller's belief
+        // of the type of the texture and the actual texture type.
+        match self.target_kind() {
+            TextureKind::Dim2D if z != 0 || d != 1 => {
+                return Err(TextureUploadParamsError::InvalidLayerIndex2d(z + d));
+            }
+            TextureKind::CubeMap if z + d > 5 => {
+                return Err(TextureUploadParamsError::InvalidLayerIndexCubemap(z + d));
+            }
+            _ => {}
+        }
+
+        let z = z.min(meta.layers);
+
+        upload_texture(
+            self.texture_id(),
+            self.target_kind(),
+            mip_level,
+            x,
+            y,
+            w,
+            h,
+            z,
+            d,
+            data,
+            self.metadata().gl_format,
+        );
+
+        Ok(())
+    }
+
+    fn upload_2d(
+        &self,
+        mip_level: i32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        data: &[u8],
+    ) -> Result<(), TextureUploadParamsError> {
+        self.upload_slice(mip_level, x, y, 0, w, h, 1, data)
+    }
+
+    fn upload_2d_whole(&self, mip_level: i32, data: &[u8]) -> Result<(), TextureUploadParamsError> {
+        let (w, h) = self.size();
+        self.upload_2d(mip_level, 0, 0, w, h, data)
+    }
+
+    fn upload_layer(
+        &self,
+        mip_level: i32,
+        x: i32,
+        y: i32,
+        layer: i32,
+        w: i32,
+        h: i32,
+        data: &[u8],
+    ) -> Result<(), TextureUploadParamsError> {
+        self.upload_slice(mip_level, x, y, layer, w, h, 1, data)
+    }
+
+    fn upload_layer_whole(
+        &self,
+        mip_level: i32,
+        layer: i32,
+        data: &[u8],
+    ) -> Result<(), TextureUploadParamsError> {
+        let (w, h) = self.size();
+        self.upload_slice(mip_level, 0, 0, layer, w, h, 1, data)
+    }
+
+    fn upload_cubemap_array_face(
+        &self,
+        mip_level: i32,
+        cubemap_index: i32,
+        x: i32,
+        y: i32,
+        face: i32,
+        w: i32,
+        h: i32,
+        data: &[u8],
+    ) -> Result<(), TextureUploadParamsError> {
+        if face > 5 {
+            return Err(TextureUploadParamsError::InvalidLayerFaceIndexCubemapArray(
+                face,
+            ));
+        }
+        let layer = (cubemap_index * 6) + face;
+        self.upload_layer(mip_level, x, y, layer, w, h, data)
+    }
+
+    fn upload_cubemap_array_face_whole(
+        &self,
+        mip_level: i32,
+        cubemap_index: i32,
+        face: i32,
+        data: &[u8],
+    ) -> Result<(), TextureUploadParamsError> {
+        let (w, h) = self.size();
+        self.upload_cubemap_array_face(mip_level, cubemap_index, 0, 0, face, w, h, data)
+    }
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum TextureUploadParamsError {
+    #[error("target is strictly 2D, but an invalid layer index or span ({0} != 1) was provided")]
+    InvalidLayerIndex2d(i32),
+    #[error("target is strictly Cubemap, but an invalid layer index ({0} > 5) was provided")]
+    InvalidLayerIndexCubemap(i32),
+    #[error("target is a Cubemap Array, but an invalid layer FACE index ({0} > 5) was provided")]
+    InvalidLayerFaceIndexCubemapArray(i32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
+pub enum TextureKind {
+    Dim2D,
+    Dim2DArray,
+    Dim3D,
+    CubeMap,
+    CubeMapArray,
+}
+impl TextureKind {
     const fn bookkeping_index(self) -> usize {
         match self {
-            TextureTarget::Flat => 0,
-            TextureTarget::Cube => 1,
-            TextureTarget::Array => 2,
+            TextureKind::Dim2D => 0,
+            TextureKind::Dim2DArray => 1,
+            TextureKind::Dim3D => 2,
+            TextureKind::CubeMap => 3,
+            TextureKind::CubeMapArray => 4,
         }
     }
 }
-impl GlProperty for TextureTarget {
+impl GlProperty for TextureKind {
     fn property_enum(self) -> u32 {
         match self {
-            TextureTarget::Flat => gl::TEXTURE_2D,
-            TextureTarget::Cube => gl::TEXTURE_3D,
-            TextureTarget::Array => gl::TEXTURE_2D_ARRAY,
+            TextureKind::Dim2D => gl::TEXTURE_2D,
+            TextureKind::Dim2DArray => gl::TEXTURE_2D_ARRAY,
+            TextureKind::Dim3D => gl::TEXTURE_3D,
+            TextureKind::CubeMap => gl::TEXTURE_CUBE_MAP,
+            TextureKind::CubeMapArray => gl::TEXTURE_CUBE_MAP_ARRAY,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
-pub struct ImageMetadata {
+pub struct TextureMetadata {
+    kind: TextureKind,
     width: i32,
     height: i32,
+    layers: i32,
+    mip_levels: i32,
     format: ImageFormat,
     pixel: ImageType,
     gl_format: GlFormat,
 }
-impl ImageMetadata {
-    /// Returns the largest side of the texture.
+impl TextureMetadata {
+    const fn null(kind: TextureKind) -> Self {
+        Self {
+            kind,
+            width: 1,
+            height: 1,
+            layers: 1,
+            mip_levels: 0,
+            format: ImageFormat::Rgba,
+            pixel: ImageType::Bits8,
+            gl_format: GlFormat {
+                internal: 0,
+                format: 0,
+                data_type: 0,
+            },
+        }
+    }
+
+    pub const fn kind(&self) -> TextureKind {
+        self.kind
+    }
+
+    /// Returns the largest side of the texture (between width and height).
     pub fn max_size(&self) -> i32 {
         self.width.max(self.height)
     }
@@ -485,6 +700,18 @@ impl ImageMetadata {
 
     pub const fn height(&self) -> i32 {
         self.height
+    }
+
+    pub const fn layers(&self) -> i32 {
+        match self.kind {
+            TextureKind::Dim2D => 1,
+            TextureKind::CubeMap => 6,
+            TextureKind::Dim2DArray | TextureKind::Dim3D | TextureKind::CubeMapArray => self.layers,
+        }
+    }
+
+    pub const fn mip_levels(&self) -> i32 {
+        self.mip_levels
     }
 
     pub const fn format(&self) -> ImageFormat {
@@ -908,226 +1135,120 @@ fn create() -> u32 {
     id
 }
 
-/// Uploads a 2D texture to the GPU using `glTexImage2D`.
-fn upload_bytes_2d(width: i32, height: i32, data: &[u8], format: GlFormat) {
-    let internal = format.internal;
-    let data_type = format.data_type;
-    let format = format.format;
-
-    unsafe {
-        gl::TexImage2D(
-            gl::TEXTURE_2D,
-            0,
-            internal as i32,
-            width,
-            height,
-            0,
-            format,
-            data_type,
-            data.as_ptr().cast(),
-        );
-    }
-}
-
-fn sub_upload_bytes_2d(x: i32, y: i32, w: i32, h: i32, data: &[u8], format: GlFormat) {
-    let data_type = format.data_type;
-    let format = format.format;
-
-    unsafe {
-        gl::TexSubImage2D(
-            gl::TEXTURE_2D,
-            0,
-            x,
-            y,
-            w,
-            h,
-            format,
-            data_type,
-            data.as_ptr().cast(),
-        );
-    }
-}
-
-fn upload_bytes_cubemap(face: u32, w: i32, h: i32, data: &[u8], format: GlFormat) {
-    assert!(face < 6, "cubemap face must be a value from 0 to 5");
-
-    let internal = format.internal;
-    let data_type = format.data_type;
-    let format = format.format;
-
-    unsafe {
-        gl::TexImage2D(
-            gl::TEXTURE_CUBE_MAP_POSITIVE_X + face,
-            0,
-            internal as i32,
-            w,
-            h,
-            0,
-            format,
-            data_type,
-            data.as_ptr().cast(),
-        );
-    }
-}
-
-fn sub_upload_bytes_cubemap(
-    face: u32,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    data: &[u8],
-    format: GlFormat,
+fn allocate_texture(
+    texture: u32,
+    kind: TextureKind,
+    width: i32,
+    height: i32,
+    layers: i32,
+    mip_levels: i32,
+    internal_format: u32,
 ) {
-    assert!(face < 6, "cubemap face must be a value from 0 to 5");
-
-    let data_type = format.data_type;
-    let format = format.format;
-
-    unsafe {
-        gl::TexSubImage2D(
-            gl::TEXTURE_CUBE_MAP_POSITIVE_X + face,
-            0,
-            x,
-            y,
-            w,
-            h,
-            format,
-            data_type,
-            data.as_ptr().cast(),
-        );
+    match kind {
+        TextureKind::Dim2D => unsafe {
+            gl::TextureStorage2D(texture, mip_levels, internal_format, width, height);
+        },
+        TextureKind::Dim2DArray | TextureKind::Dim3D => unsafe {
+            gl::TextureStorage3D(texture, mip_levels, internal_format, width, height, layers);
+        },
+        TextureKind::CubeMap => {
+            assert_eq!(
+                layers, 6,
+                "cubemap texture allocation must provide exactly 6 layers"
+            );
+            unsafe {
+                gl::TextureStorage2D(texture, mip_levels, internal_format, width, height);
+            }
+        }
+        TextureKind::CubeMapArray => {
+            assert_eq!(
+                layers % 6,
+                0,
+                "cubemap array texture allocation must provide a multiple of 6 layers"
+            );
+            unsafe {
+                gl::TextureStorage3D(texture, mip_levels, internal_format, width, height, layers);
+            }
+        }
     }
 }
 
-/// Allocates a 2D texture to the GPU using `glTexStorage2D`.
-fn alloc_2d(width: i32, height: i32, format: GlFormat) {
-    let internal = format.internal;
-    unsafe {
-        gl::TexStorage2D(gl::TEXTURE_2D, 0, internal, width, height);
-    }
-}
-
-/// Uploads a 3D texture to the GPU using `glTexImage3D`.
-///
-/// After upload the texture is not unbound, allowing the caller to set
-/// parameters using `glTexParameterX` right after this call without having
-/// to re-bind the texture.
-fn upload_bytes_3d(width: i32, height: i32, depth: i32, data: &[u8], format: GlFormat) {
-    let internal = format.internal;
-    let data_type = format.data_type;
-    let format = format.format;
-
-    unsafe {
-        gl::TexImage3D(
-            gl::TEXTURE_3D,
-            0,
-            internal as i32,
-            width,
-            height,
-            depth,
-            0,
-            format,
-            data_type,
-            data.as_ptr().cast(),
-        );
-    }
-}
-
-fn sub_upload_bytes_3d(
+fn upload_texture(
+    texture: u32,
+    kind: TextureKind,
+    mip_level: i32,
     x: i32,
     y: i32,
-    z: i32,
-    w: i32,
-    h: i32,
-    d: i32,
+    width: i32,
+    height: i32,
+    layer_offset: i32,
+    layer_span: i32,
     data: &[u8],
     format: GlFormat,
 ) {
     let data_type = format.data_type;
     let format = format.format;
 
-    unsafe {
-        gl::TexSubImage3D(
-            gl::TEXTURE_3D,
-            0,
-            x,
-            y,
-            z,
-            w,
-            h,
-            d,
-            format,
-            data_type,
-            data.as_ptr().cast(),
-        );
-    }
-}
-
-/// Allocates a 3D texture to the GPU using `glTexStorage3D`.
-fn alloc_3d(width: i32, height: i32, depth: i32, format: GlFormat) {
-    let internal = format.internal;
-    unsafe {
-        gl::TexStorage3D(gl::TEXTURE_3D, 0, internal, width, height, depth);
-    }
-}
-
-/// Uploads an array texture to the GPU using `glTexImage3D`.
-fn upload_bytes_array(width: i32, height: i32, layers: i32, data: &[u8], format: GlFormat) {
-    let internal = format.internal;
-    let data_type = format.data_type;
-    let format = format.format;
-
-    unsafe {
-        gl::TexImage3D(
-            gl::TEXTURE_2D_ARRAY,
-            0,
-            internal as i32,
-            width,
-            height,
-            layers,
-            0,
-            format,
-            data_type,
-            data.as_ptr().cast(),
-        );
-    }
-}
-
-fn sub_upload_bytes_array(
-    x: i32,
-    y: i32,
-    z: i32,
-    w: i32,
-    h: i32,
-    d: i32,
-    data: &[u8],
-    format: GlFormat,
-) {
-    let data_type = format.data_type;
-    let format = format.format;
-
-    unsafe {
-        gl::TexSubImage3D(
-            gl::TEXTURE_2D_ARRAY,
-            0,
-            x,
-            y,
-            z,
-            w,
-            h,
-            d,
-            format,
-            data_type,
-            data.as_ptr().cast(),
-        );
-    }
-}
-
-/// Allocates an array texture to the GPU using `glTexStorage3D`.
-fn alloc_array(width: i32, height: i32, layers: i32, format: GlFormat) {
-    let internal = format.internal;
-    unsafe {
-        gl::TexStorage3D(gl::TEXTURE_2D_ARRAY, 0, internal, width, height, layers);
+    match kind {
+        TextureKind::Dim2D => unsafe {
+            gl::TextureSubImage2D(
+                texture,
+                mip_level,
+                x,
+                y,
+                width,
+                height,
+                format,
+                data_type,
+                data.as_ptr() as *const _,
+            );
+        },
+        TextureKind::Dim2DArray | TextureKind::Dim3D | TextureKind::CubeMapArray => {
+            assert_ne!(
+                layer_span, 0,
+                "upload to a 3d texture or texture array must span over atleast one layer"
+            );
+            unsafe {
+                gl::TextureSubImage3D(
+                    texture,
+                    mip_level,
+                    x,
+                    y,
+                    layer_offset,
+                    width,
+                    height,
+                    layer_span,
+                    format,
+                    data_type,
+                    data.as_ptr() as *const _,
+                );
+            }
+        }
+        TextureKind::CubeMap => {
+            assert!(
+                layer_offset >= 0,
+                "upload to cubemap cannot offset from a negative layer"
+            );
+            assert!(
+                layer_offset + layer_span < 6,
+                "upload to cubemap cannot span out of bounds (a cubemap has exactly 6 layers)"
+            );
+            unsafe {
+                gl::TextureSubImage3D(
+                    texture,
+                    mip_level,
+                    x,
+                    y,
+                    layer_offset,
+                    width,
+                    height,
+                    layer_span,
+                    format,
+                    data_type,
+                    data.as_ptr() as *const _,
+                );
+            }
+        }
     }
 }
 
@@ -1138,7 +1259,7 @@ fn alloc_array(width: i32, height: i32, layers: i32, format: GlFormat) {
 ///
 /// These correspond to the `GL_TEXTURE_MIN_FILTER` and `GL_TEXTURE_MAG_FILTER`
 /// C OpenGL enums to set texture parameters.
-pub fn set_filter(target: TextureTarget, filtering: TextureFiltering) {
+pub fn set_filter(target: TextureKind, filtering: TextureFiltering) {
     let target = target.property_enum();
     let mag_filtering = filtering.force_base_filtering().property_enum();
     let min_filtering = filtering.property_enum();
@@ -1153,7 +1274,7 @@ pub fn set_filter(target: TextureTarget, filtering: TextureFiltering) {
 ///
 /// These correspond to the `GL_TEXTURE_WRAP_S` and `GL_TEXTURE_WRAP_T` C
 /// OpenGL enums to set texture parameters.
-pub fn set_wrapping_st(target: TextureTarget, wrapping: TextureWrapping) {
+pub fn set_wrapping_st(target: TextureKind, wrapping: TextureWrapping) {
     let target = target.property_enum();
     let wrapping = wrapping.property_enum();
 
@@ -1169,7 +1290,7 @@ pub fn set_wrapping_st(target: TextureTarget, wrapping: TextureWrapping) {
 ///
 /// This corresponds to the `GL_TEXTURE_WRAP_R` C OpenGL enum to set the
 /// texture parameter.
-pub fn set_wrapping_r(target: TextureTarget, wrapping: TextureWrapping) {
+pub fn set_wrapping_r(target: TextureKind, wrapping: TextureWrapping) {
     let wrapping = wrapping.property_enum();
     unsafe {
         gl::TexParameteri(target.property_enum(), gl::TEXTURE_WRAP_R, wrapping as i32);
