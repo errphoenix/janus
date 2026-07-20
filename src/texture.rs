@@ -480,6 +480,60 @@ pub trait Tex: GpuResource + AsTexView {
             .is_some_and(|t| t.gl_pointer == self.texture_id())
     }
 
+    fn set_gl_parameteri(&self, gl_parameter: u32, value: i32) {
+        let texture = self.texture_id();
+        unsafe {
+            gl::TextureParameteri(texture, gl_parameter, value);
+        }
+    }
+
+    fn set_gl_parameterf(&self, gl_parameter: u32, value: f32) {
+        let texture = self.texture_id();
+        unsafe {
+            gl::TextureParameterf(texture, gl_parameter, value);
+        }
+    }
+
+    fn set_filtering_min(&self, filtering: TextureFiltering) {
+        let value = filtering.force_base_filtering().property_enum();
+        self.set_gl_parameteri(gl::TEXTURE_MIN_FILTER, value as i32);
+    }
+
+    fn set_filtering_mag(&self, filtering: TextureFiltering) {
+        let value = filtering.property_enum();
+        self.set_gl_parameteri(gl::TEXTURE_MAG_FILTER, value as i32);
+    }
+
+    fn set_filtering_minmag(&self, filtering: TextureFiltering) {
+        self.set_filtering_min(filtering);
+        self.set_filtering_mag(filtering);
+    }
+
+    fn set_wrapping_s(&self, wrapping: TextureWrapping) {
+        let value = wrapping.property_enum();
+        self.set_gl_parameteri(gl::TEXTURE_WRAP_S, value as i32);
+    }
+
+    fn set_wrapping_t(&self, wrapping: TextureWrapping) {
+        let value = wrapping.property_enum();
+        self.set_gl_parameteri(gl::TEXTURE_WRAP_T, value as i32);
+    }
+
+    fn set_wrapping_r(&self, wrapping: TextureWrapping) {
+        let value = wrapping.property_enum();
+        self.set_gl_parameteri(gl::TEXTURE_WRAP_R, value as i32);
+    }
+
+    fn set_wrapping_st(&self, wrapping: TextureWrapping) {
+        self.set_wrapping_s(wrapping);
+        self.set_wrapping_t(wrapping);
+    }
+
+    fn set_wrapping_str(&self, wrapping: TextureWrapping) {
+        self.set_wrapping_st(wrapping);
+        self.set_wrapping_r(wrapping);
+    }
+
     fn upload_slice(
         &self,
         mip_level: i32,
@@ -1236,7 +1290,7 @@ fn upload_texture(
     }
 }
 
-/// Sets min and mag filtering to the given `filtering`.
+/// Sets *global* min and mag filtering to the given `filtering`.
 ///
 /// The mag filter is converted to the filtering "base type" (either nearest
 /// or linear) with [`TextureFiltering::force_base_filtering`].
@@ -1254,7 +1308,7 @@ pub fn set_filter(target: TextureKind, filtering: TextureFiltering) {
     }
 }
 
-/// Set ST texture wrapping for 2D textures.
+/// Set *global* ST texture wrapping for 2D textures.
 ///
 /// These correspond to the `GL_TEXTURE_WRAP_S` and `GL_TEXTURE_WRAP_T` C
 /// OpenGL enums to set texture parameters.
@@ -1268,7 +1322,7 @@ pub fn set_wrapping_st(target: TextureKind, wrapping: TextureWrapping) {
     }
 }
 
-/// Set R texture wrapping used in 3D textures.
+/// Set *global* R texture wrapping used in 3D textures.
 ///
 /// It is meant to be used in combination with [`set_wrapping_st`].
 ///
