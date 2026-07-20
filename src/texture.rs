@@ -5,13 +5,8 @@ use image::{DynamicImage, ImageError, ImageReader};
 
 const TEXTURE_TARGETS: usize = 5;
 const TEXTURE_UNITS: usize = 16;
-static mut CURRENT_BINDPOINT: u32 = 0;
 static mut BINDING_POINTS: [[TextureView; TEXTURE_TARGETS]; TEXTURE_UNITS] =
     [[TextureView::null(TextureKind::Dim2D); TEXTURE_TARGETS]; TEXTURE_UNITS];
-
-pub const fn get_active_unit() -> u32 {
-    unsafe { CURRENT_BINDPOINT }
-}
 
 /// Get the possibly bound [`TextureView`] for the `target` at the given `unit`.
 ///
@@ -39,38 +34,31 @@ pub fn bind_without_meta(target: TextureKind, texture: impl Into<TextureKey>, un
     let texture: TextureKey = texture.into();
     let bkeep_i = target.bookkeping_index();
     unsafe {
-        if CURRENT_BINDPOINT != unit {
-            crate::gl::ActiveTexture(crate::gl::TEXTURE0 + unit);
-        }
         if BINDING_POINTS[unit as usize][bkeep_i].gl_pointer != texture.0 {
-            crate::gl::BindTexture(target.property_enum(), texture.0);
+            gl::BindTextureUnit(gl::TEXTURE0 + unit, texture.0);
         }
     }
 
     let dummy = TextureView::null(target);
     unsafe {
-        CURRENT_BINDPOINT = unit;
         BINDING_POINTS[unit as usize][bkeep_i] = dummy;
     }
 }
 
-pub fn bind(target: TextureKind, texture: impl AsTexView, unit: u32) {
+pub fn bind(texture: impl AsTexView, unit: u32) {
     crate::debug_assert_gl!();
 
     let texture = texture.as_texture_view();
+    let target = texture.target_kind();
     let bkeep_i = target.bookkeping_index();
 
     unsafe {
-        if CURRENT_BINDPOINT != unit {
-            crate::gl::ActiveTexture(crate::gl::TEXTURE0 + unit);
-        }
         if BINDING_POINTS[unit as usize][bkeep_i] != texture {
-            crate::gl::BindTexture(target.property_enum(), texture.gl_pointer);
+            gl::BindTextureUnit(gl::TEXTURE0 + unit, texture.gl_pointer);
         }
     }
 
     unsafe {
-        CURRENT_BINDPOINT = unit;
         BINDING_POINTS[unit as usize][bkeep_i] = texture;
     }
 }
@@ -82,17 +70,13 @@ pub fn unbind(target: TextureKind, unit: u32) {
     let bkeep_i = target.bookkeping_index();
 
     unsafe {
-        if CURRENT_BINDPOINT != unit {
-            crate::gl::ActiveTexture(crate::gl::TEXTURE0 + unit);
-        }
         if !BINDING_POINTS[unit as usize][bkeep_i].is_null() {
-            crate::gl::BindTexture(target.property_enum(), 0);
+            gl::BindTextureUnit(gl::TEXTURE0 + unit, 0);
         }
     }
 
     unsafe {
-        CURRENT_BINDPOINT = unit;
-        BINDING_POINTS[unit as usize][bkeep_i] = TextureView::null(target);
+        BINDING_POINTS[unit as usize].fill(TextureView::null(TextureKind::Dim2D));
     }
 }
 
@@ -484,7 +468,7 @@ pub trait Tex: GpuResource + AsTexView {
     }
 
     fn bind(&self, unit: u32) {
-        bind(self.target_kind(), self.as_texture_view(), unit);
+        bind(self.as_texture_view(), unit);
     }
 
     fn unbind(&self, unit: u32) {
@@ -518,7 +502,7 @@ pub trait Tex: GpuResource + AsTexView {
             TextureKind::Dim2D if z != 0 || d != 1 => {
                 return Err(TextureUploadParamsError::InvalidLayerIndex2d(z + d));
             }
-            TextureKind::CubeMap if z + d > 5 => {
+            TextureKind::CubeMap if z + d > 6 => {
                 return Err(TextureUploadParamsError::InvalidLayerIndexCubemap(z + d));
             }
             _ => {}
@@ -619,7 +603,7 @@ pub trait Tex: GpuResource + AsTexView {
 pub enum TextureUploadParamsError {
     #[error("target is strictly 2D, but an invalid layer index or span ({0} != 1) was provided")]
     InvalidLayerIndex2d(i32),
-    #[error("target is strictly Cubemap, but an invalid layer index ({0} > 5) was provided")]
+    #[error("target is strictly Cubemap, but an invalid layer index + span ({0} > 6) was provided")]
     InvalidLayerIndexCubemap(i32),
     #[error("target is a Cubemap Array, but an invalid layer FACE index ({0} > 5) was provided")]
     InvalidLayerFaceIndexCubemapArray(i32),
@@ -1230,7 +1214,7 @@ fn upload_texture(
                 "upload to cubemap cannot offset from a negative layer"
             );
             assert!(
-                layer_offset + layer_span < 6,
+                layer_offset + layer_span <= 6,
                 "upload to cubemap cannot span out of bounds (a cubemap has exactly 6 layers)"
             );
             unsafe {
