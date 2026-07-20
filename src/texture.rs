@@ -35,7 +35,7 @@ pub fn bind_without_meta(target: TextureKind, texture: impl Into<TextureKey>, un
     let bkeep_i = target.bookkeping_index();
     unsafe {
         if BINDING_POINTS[unit as usize][bkeep_i].gl_pointer != texture.0 {
-            gl::BindTextureUnit(gl::TEXTURE0 + unit, texture.0);
+            gl::BindTextureUnit(unit, texture.0);
         }
     }
 
@@ -54,7 +54,7 @@ pub fn bind(texture: impl AsTexView, unit: u32) {
 
     unsafe {
         if BINDING_POINTS[unit as usize][bkeep_i] != texture {
-            gl::BindTextureUnit(gl::TEXTURE0 + unit, texture.gl_pointer);
+            gl::BindTextureUnit(unit, texture.gl_pointer);
         }
     }
 
@@ -71,7 +71,7 @@ pub fn unbind(target: TextureKind, unit: u32) {
 
     unsafe {
         if !BINDING_POINTS[unit as usize][bkeep_i].is_null() {
-            gl::BindTextureUnit(gl::TEXTURE0 + unit, 0);
+            gl::BindTextureUnit(unit, 0);
         }
     }
 
@@ -155,7 +155,10 @@ pub struct Texture {
     metadata: TextureMetadata,
 }
 impl Texture {
-    pub fn from_2d_image(image: &DynamicImage, mip_levels: i32) -> Result<Self, TextureError> {
+    pub fn from_2d_image(
+        image: &DynamicImage,
+        mip_levels: MipLevels,
+    ) -> Result<Self, TextureError> {
         let (bytes, w, h, (px, fmt)) = {
             let bytes: Box<[u8]> = image.as_bytes().into();
             let width = image.width() as i32;
@@ -193,7 +196,7 @@ impl Texture {
 
     pub fn from_2d_image_file(
         path: impl AsRef<Path>,
-        mip_levels: i32,
+        mip_levels: MipLevels,
     ) -> Result<Self, TextureError> {
         let image = load_image(path).map_err(TextureError::ImageLoadError)?;
         Self::from_2d_image(&image, mip_levels)
@@ -204,7 +207,7 @@ impl Texture {
         width: i32,
         height: i32,
         layers: i32,
-        mip_levels: i32,
+        mip_levels: MipLevels,
         pixel: ImageType,
         format: ImageFormat,
     ) -> Self {
@@ -221,7 +224,7 @@ impl Texture {
         }
 
         let gl_format = choose_gl_format(format, pixel);
-        let id = create();
+        let id = create(kind);
         allocate_texture(
             id,
             kind,
@@ -232,6 +235,7 @@ impl Texture {
             gl_format.internal,
         );
 
+        let mip_levels = mip_levels.get();
         let metadata = TextureMetadata {
             width,
             height,
@@ -252,7 +256,7 @@ impl Texture {
     pub fn new_2d(
         width: i32,
         height: i32,
-        mip_levels: i32,
+        mip_levels: MipLevels,
         pixel: ImageType,
         format: ImageFormat,
     ) -> Self {
@@ -271,7 +275,7 @@ impl Texture {
         width: i32,
         height: i32,
         layers: i32,
-        mip_levels: i32,
+        mip_levels: MipLevels,
         pixel: ImageType,
         format: ImageFormat,
     ) -> Self {
@@ -290,7 +294,7 @@ impl Texture {
         width: i32,
         height: i32,
         depth: i32,
-        mip_levels: i32,
+        mip_levels: MipLevels,
         pixel: ImageType,
         format: ImageFormat,
     ) -> Self {
@@ -308,7 +312,7 @@ impl Texture {
     pub fn new_cubemap(
         width: i32,
         height: i32,
-        mip_levels: i32,
+        mip_levels: MipLevels,
         pixel: ImageType,
         format: ImageFormat,
     ) -> Self {
@@ -327,10 +331,11 @@ impl Texture {
         width: i32,
         height: i32,
         num_cubemaps: i32,
-        mip_levels: i32,
+        mip_levels: MipLevels,
         pixel: ImageType,
         format: ImageFormat,
     ) -> Self {
+        assert!(num_cubemaps > 0);
         Self::new(
             TextureKind::CubeMapArray,
             width,
@@ -712,7 +717,7 @@ impl TextureMetadata {
             width: 1,
             height: 1,
             layers: 1,
-            mip_levels: 0,
+            mip_levels: 1,
             format: ImageFormat::Rgba,
             pixel: ImageType::Bits8,
             gl_format: GlFormat {
@@ -1165,10 +1170,33 @@ fn choose_gl_format(format: ImageFormat, pixel: ImageType) -> GlFormat {
     }
 }
 
-fn create() -> u32 {
+/// Texture Mip-levels amount. Must be atleast 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MipLevels(std::num::NonZeroI32);
+impl Default for MipLevels {
+    fn default() -> Self {
+        Self::try_new(1).expect("1 is not 0.")
+    }
+}
+impl MipLevels {
+    pub const fn new(mip_count: std::num::NonZeroI32) -> Self {
+        Self(mip_count)
+    }
+
+    pub fn try_new(mip_count: i32) -> Option<Self> {
+        std::num::NonZeroI32::new(mip_count).map(Self::new)
+    }
+
+    pub const fn get(&self) -> i32 {
+        self.0.get()
+    }
+}
+
+fn create(kind: TextureKind) -> u32 {
+    let target = kind.property_enum();
     let mut id = 0;
     unsafe {
-        gl::GenTextures(1, &mut id);
+        gl::CreateTextures(target, 1, &mut id);
     }
     id
 }
@@ -1179,9 +1207,10 @@ fn allocate_texture(
     width: i32,
     height: i32,
     layers: i32,
-    mip_levels: i32,
+    mip_levels: MipLevels,
     internal_format: u32,
 ) {
+    let mip_levels = mip_levels.get();
     match kind {
         TextureKind::Dim2D => unsafe {
             gl::TextureStorage2D(texture, mip_levels, internal_format, width, height);
