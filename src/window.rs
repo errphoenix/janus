@@ -147,7 +147,8 @@ where
         // on platforms that rely on wgl (windows).
         if let Err(err) = gl_surface.set_swap_interval(
             gl_ctx,
-            glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
+            //glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
+            glutin::surface::SwapInterval::DontWait,
         ) {
             eprintln!("failed to set vsync to enabled: {err}");
         }
