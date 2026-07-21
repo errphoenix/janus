@@ -39,12 +39,14 @@ pub fn stream<const SLOTS: usize, const SECTIONS: usize>() -> (
     let cursor_options = state.cursor_options.clone();
     let cursor = state.snapshot.cursor.clone();
     let mouse_wheel = state.snapshot.mouse_wheel.clone();
+    let resync_flag = state.resync_flag.clone();
 
     let dispatcher = InputDispatcher {
         stream,
         cursor_options,
         cursor,
         mouse_wheel,
+        resync_flag,
     };
 
     (state, dispatcher)
@@ -65,23 +67,28 @@ pub struct InputDispatcher<const SLOTS: usize, const SECTIONS: usize> {
     cursor_options: Arc<CursorOptions>,
     cursor: Arc<Cursor>,
     mouse_wheel: Arc<sync::TriCell<MouseWheelValue>>,
+
+    resync_flag: Arc<AtomicBool>,
 }
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS> {
     pub fn sync(&mut self) {
-        self.stream.frame_front();
+        // ensure input consumer thread has passed
+        if self.resync_flag.swap(false, Ordering::Acquire) {
+            self.stream.frame_front();
 
-        let cursor_abs = self.cursor.current.get();
+            let cursor_abs = self.cursor.current.get();
 
-        let _ = self.cursor.current.advance();
-        let _ = self.cursor.delta.advance();
-        let _ = self.mouse_wheel.advance();
+            let _ = self.cursor.current.advance();
+            let _ = self.cursor.delta.advance();
+            let _ = self.mouse_wheel.advance();
 
-        self.cursor.current.set(cursor_abs);
-        self.cursor.delta.set((0.0, 0.0));
-        self.mouse_wheel.set(0.0);
+            self.cursor.current.set(cursor_abs);
+            self.cursor.delta.set((0.0, 0.0));
+            self.mouse_wheel.set(0.0);
 
-        // cursor options handled separately
+            // cursor options handled separately
+        }
     }
 
     pub fn cursor_options(&self) -> &CursorOptions {
@@ -175,6 +182,7 @@ pub struct InputState<const SLOTS: usize, const SECTIONS: usize> {
     snapshot: InputSnapshot,
     cursor_options: Arc<CursorOptions>,
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
+    resync_flag: Arc<AtomicBool>,
 }
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
@@ -183,6 +191,7 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
     }
 
     pub fn sync(&mut self) {
+        self.resync_flag.store(true, Ordering::Release);
         self.snapshot.keys.update();
         self.stream.frame_back();
 
