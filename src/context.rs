@@ -258,11 +258,16 @@ where
                     DeltaAccumulator::new(step, now)
                 };
 
+                let mut whole_frame_delta = DeltaCycle::new(Instant::now());
                 let mut iter = 0;
                 loop {
-                    state.new_frame(delta.cycle.delta());
+                    state.new_frame(whole_frame_delta.delta());
 
-                    delta.accum();
+                    while delta.step() > delta.accumulated() {
+                        delta.accum();
+                        std::thread::yield_now();
+                    }
+
                     while delta.overstep() {
                         if iter == 0 {
                             delta.set_step(state.step_duration());
@@ -271,10 +276,8 @@ where
                         iter += 1;
                     }
                     state.finish_frame();
+                    whole_frame_delta.sync();
 
-                    if delta.step() > delta.accumulated() {
-                        std::thread::yield_now();
-                    }
                     iter = 0;
                 }
             });
