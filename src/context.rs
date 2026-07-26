@@ -448,13 +448,25 @@ impl DeltaTime {
         self.0
     }
 }
+impl std::ops::Mul<f32> for DeltaTime {
+    type Output = Self;
 
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self(self.0 * rhs as f64)
+    }
+}
+impl std::ops::Mul<f64> for DeltaTime {
+    type Output = Self;
+
+    fn mul(self, rhs: f64) -> Self::Output {
+        Self(self.0 * rhs)
+    }
+}
 impl From<Duration> for DeltaTime {
     fn from(value: Duration) -> Self {
         DeltaTime(value.as_secs_f64())
     }
 }
-
 impl Deref for DeltaTime {
     type Target = f64;
 
