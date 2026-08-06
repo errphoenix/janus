@@ -4,7 +4,14 @@ use std::{cell::UnsafeCell, ops::RangeBounds, slice::SliceIndex, sync::Arc};
 pub struct TriVec<T> {
     inner: Arc<UnsafeCell<[Vec<T>; 3]>>,
 }
-impl<T> TriVec<T> {
+unsafe impl<T> std::marker::Sync for TriVec<T> {}
+unsafe impl<T> std::marker::Send for TriVec<T> {}
+impl<T: Clone> Default for TriVec<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl<T: Clone> TriVec<T> {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(UnsafeCell::new([Vec::new(), Vec::new(), Vec::new()])),
@@ -40,6 +47,11 @@ impl<T> TriVec<T> {
     pub fn push_mut(&self, section: usize, element: T) -> &mut T {
         let inner = unsafe { self.get_inner(section) };
         inner.push_mut(element)
+    }
+
+    pub fn extend_from_slice(&self, section: usize, other: &[T]) {
+        let inner = unsafe { self.get_inner(section) };
+        inner.extend_from_slice(other);
     }
 
     pub fn get<I: SliceIndex<[T]>>(&self, section: usize, index: I) -> Option<&I::Output> {
