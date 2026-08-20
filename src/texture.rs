@@ -353,6 +353,12 @@ impl Texture {
             metadata: self.metadata,
         }
     }
+
+    pub fn generate_mipmaps(&self) {
+        unsafe {
+            gl::GenerateTextureMipmap(self.gl_pointer);
+        }
+    }
 }
 impl Drop for Texture {
     fn drop(&mut self) {
@@ -537,6 +543,25 @@ pub trait Tex: GpuResource + AsTexView {
     fn set_wrapping_str(&self, wrapping: TextureWrapping) {
         self.set_wrapping_st(wrapping);
         self.set_wrapping_r(wrapping);
+    }
+
+    fn set_mip_level_only(&self, mip_level: i32) {
+        self.set_mip_level_min(mip_level);
+        self.set_mip_level_max(mip_level);
+    }
+
+    fn set_mip_level_max(&self, mip_max: i32) {
+        self.set_gl_parameteri(gl::TEXTURE_MAX_LEVEL, mip_max);
+    }
+
+    fn set_mip_level_min(&self, mip_base: i32) {
+        self.set_gl_parameteri(gl::TEXTURE_BASE_LEVEL, mip_base);
+    }
+
+    /// Set the mip base and max levels to their OpenGL defaults of 0 and 1000.
+    fn set_mip_level_unbound(&self) {
+        self.set_mip_level_min(0);
+        self.set_mip_level_min(1000);
     }
 
     fn upload_slice(
@@ -1338,50 +1363,5 @@ fn upload_texture(
                 );
             }
         }
-    }
-}
-
-/// Sets *global* min and mag filtering to the given `filtering`.
-///
-/// The mag filter is converted to the filtering "base type" (either nearest
-/// or linear) with [`TextureFiltering::force_base_filtering`].
-///
-/// These correspond to the `GL_TEXTURE_MIN_FILTER` and `GL_TEXTURE_MAG_FILTER`
-/// C OpenGL enums to set texture parameters.
-pub fn set_filter(target: TextureKind, filtering: TextureFiltering) {
-    let target = target.property_enum();
-    let mag_filtering = filtering.force_base_filtering().property_enum();
-    let min_filtering = filtering.property_enum();
-
-    unsafe {
-        gl::TexParameteri(target, gl::TEXTURE_MIN_FILTER, min_filtering as i32);
-        gl::TexParameteri(target, gl::TEXTURE_MAG_FILTER, mag_filtering as i32);
-    }
-}
-
-/// Set *global* ST texture wrapping for 2D textures.
-///
-/// These correspond to the `GL_TEXTURE_WRAP_S` and `GL_TEXTURE_WRAP_T` C
-/// OpenGL enums to set texture parameters.
-pub fn set_wrapping_st(target: TextureKind, wrapping: TextureWrapping) {
-    let target = target.property_enum();
-    let wrapping = wrapping.property_enum();
-
-    unsafe {
-        gl::TexParameteri(target, gl::TEXTURE_WRAP_S, wrapping as i32);
-        gl::TexParameteri(target, gl::TEXTURE_WRAP_T, wrapping as i32);
-    }
-}
-
-/// Set *global* R texture wrapping used in 3D textures.
-///
-/// It is meant to be used in combination with [`set_wrapping_st`].
-///
-/// This corresponds to the `GL_TEXTURE_WRAP_R` C OpenGL enum to set the
-/// texture parameter.
-pub fn set_wrapping_r(target: TextureKind, wrapping: TextureWrapping) {
-    let wrapping = wrapping.property_enum();
-    unsafe {
-        gl::TexParameteri(target.property_enum(), gl::TEXTURE_WRAP_R, wrapping as i32);
     }
 }
