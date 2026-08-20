@@ -764,6 +764,10 @@ impl TextureMetadata {
     pub const fn pixel(&self) -> ImageType {
         self.pixel
     }
+
+    pub const fn internal_format(&self) -> GlFormat {
+        self.gl_format
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, Default)]
@@ -1024,10 +1028,28 @@ impl ImageType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash)]
-struct GlFormat {
+pub struct GlFormat {
     internal: u32,
     format: u32,
     data_type: u32,
+}
+impl GlProperty for GlFormat {
+    fn property_enum(self) -> u32 {
+        self.glenum_internal_format()
+    }
+}
+impl GlFormat {
+    pub const fn glenum_internal_format(&self) -> u32 {
+        self.internal
+    }
+
+    pub const fn glenum_format(&self) -> u32 {
+        self.format
+    }
+
+    pub const fn glenum_data_type(&self) -> u32 {
+        self.data_type
+    }
 }
 
 fn choose_gl_format(format: ImageFormat, pixel: ImageType) -> GlFormat {

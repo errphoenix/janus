@@ -73,6 +73,25 @@ impl<T: Clone> TriVec<T> {
         }
     }
 
+    pub fn len(&self, section: usize) -> usize {
+        let inner = unsafe { self.get_inner(section) };
+        inner.len()
+    }
+
+    pub fn is_empty(&self, section: usize) -> bool {
+        self.len(section) == 0
+    }
+
+    pub fn as_slice(&self, section: usize) -> &[T] {
+        let inner = unsafe { self.get_inner(section) };
+        inner.as_slice()
+    }
+
+    pub fn as_mut_slice(&self, section: usize) -> &mut [T] {
+        let inner = unsafe { self.get_inner(section) };
+        inner.as_mut_slice()
+    }
+
     pub fn iter(&self, section: usize) -> impl Iterator<Item = &T> {
         let inner = unsafe { self.get_inner(section) };
         inner.iter()
