@@ -561,7 +561,7 @@ pub trait Tex: GpuResource + AsTexView {
     /// Set the mip base and max levels to their OpenGL defaults of 0 and 1000.
     fn set_mip_level_unbound(&self) {
         self.set_mip_level_min(0);
-        self.set_mip_level_min(1000);
+        self.set_mip_level_max(1000);
     }
 
     fn upload_slice(
