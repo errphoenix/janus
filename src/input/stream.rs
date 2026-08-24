@@ -1,4 +1,7 @@
-use std::sync::atomic::{AtomicU16, AtomicU64, Ordering};
+use std::{
+    sync::atomic::{AtomicU16, AtomicU64, Ordering},
+    u32,
+};
 
 use crate::input::{KeyboardKeyCode, MouseButtonIndex};
 
@@ -9,6 +12,7 @@ pub enum DeltaPacket {
         code: KeyboardKeyCode,
         down: bool,
     },
+    Text(char),
     Mouse {
         button: MouseButtonIndex,
         down: bool,
@@ -30,11 +34,15 @@ impl Into<u32> for DeltaPacket {
 impl DeltaPacket {
     const KEYBOARD_ID_BIT: u8 = 1;
     const MOUSE_ID_BIT: u8 = 2;
+    const TEXT_ID_BIT: u8 = 3;
 
     // mask is used for decode op
     // use mask only after shifting
     const CODE_BIT_MASK: u32 = 0x0000FFFF;
     const STATE_BIT_MASK: u32 = 0x0000000F;
+    // range of a 'unicode scalar value'
+    // https://www.unicode.org/glossary/#unicode_scalar_value
+    const UNICODE_BIT_MASK: u32 = 0x10ffff;
 
     // encode shifts to left
     // decode shifts to right
@@ -42,8 +50,8 @@ impl DeltaPacket {
     const ID_BIT_SHIFT: i32 = 28;
 
     fn from_bits(bits: u32) -> Self {
-        let state = bits & 0x0000000F;
-        let code = (bits >> Self::CODE_BIT_SHIFT & 0x0000FFFF) as u16;
+        let state = bits & Self::STATE_BIT_MASK;
+        let code = (bits >> Self::CODE_BIT_SHIFT & Self::CODE_BIT_MASK) as u16;
         let id = (bits >> Self::ID_BIT_SHIFT) as u8;
 
         match id {
@@ -55,6 +63,10 @@ impl DeltaPacket {
                 button: MouseButtonIndex(code),
                 down: state == 1,
             },
+            Self::TEXT_ID_BIT => {
+                let unicode = bits & Self::UNICODE_BIT_MASK;
+                Self::Text(char::from_u32(unicode).unwrap_or(' '))
+            }
             invalid => {
                 unreachable!(
                     "invalid input-delta synchronisation packet type ID of bit {invalid}; this is a bug"
@@ -76,6 +88,11 @@ impl DeltaPacket {
                 let state = down as u32;
                 let id = (Self::MOUSE_ID_BIT as u32) << Self::ID_BIT_SHIFT;
                 state | code << 8 | id
+            }
+            DeltaPacket::Text(char) => {
+                let id = (Self::TEXT_ID_BIT as u32) << Self::ID_BIT_SHIFT;
+                let unicode = (char as u32) & Self::UNICODE_BIT_MASK;
+                unicode | id
             }
         }
     }

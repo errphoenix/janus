@@ -10,8 +10,10 @@ use std::{
 
 pub use stream::{DeltaPacket, IterInputStream};
 pub use winit::event::MouseButton;
-use winit::event::MouseScrollDelta;
 pub use winit::keyboard::KeyCode;
+use winit::{
+    event::MouseScrollDelta, platform::modifier_supplement::KeyEventExtModifierSupplement,
+};
 
 use crate::{input::stream::InputStream, sync};
 
@@ -131,6 +133,11 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS>
 
         match event {
             WindowEvent::KeyboardInput { event: key, .. } => {
+                if let Some(text) = key.text_with_all_modifiers() {
+                    text.chars().for_each(|char| {
+                        self.stream.push_front(DeltaPacket::Text(char));
+                    });
+                }
                 if let PhysicalKey::Code(code) = key.physical_key {
                     let code: KeyboardKeyCode = code.into();
                     let down = matches!(key.state, ElementState::Pressed);
@@ -212,6 +219,10 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
         self.snapshot.keys.pop_key_event()
     }
 
+    pub fn pop_text_event(&mut self) -> Option<TextEvent> {
+        self.snapshot.keys.pop_text_event()
+    }
+
     pub fn keys(&self) -> &Keys {
         &self.snapshot.keys
     }
@@ -259,6 +270,14 @@ impl InputSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TextEvent(pub char);
+impl TextEvent {
+    pub const fn char(self) -> char {
+        self.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum KeyEvent {
     Mouse {
         code: u16,
@@ -272,12 +291,40 @@ pub enum KeyEvent {
     },
 }
 impl KeyEvent {
+    pub const KEYLIST_DIGITS: [KeyCode; 10] = [
+        KeyCode::Digit0,
+        KeyCode::Digit1,
+        KeyCode::Digit2,
+        KeyCode::Digit3,
+        KeyCode::Digit4,
+        KeyCode::Digit5,
+        KeyCode::Digit6,
+        KeyCode::Digit7,
+        KeyCode::Digit8,
+        KeyCode::Digit9,
+    ];
+
     pub const fn is_mouse(self) -> bool {
         matches!(self, KeyEvent::Mouse { .. })
     }
 
     pub const fn is_keyboard(self) -> bool {
         matches!(self, KeyEvent::Keyboard { .. })
+    }
+
+    pub const fn is_digit(self) -> bool {
+        if self.is_keyboard() {
+            let code = self.code();
+            let mut flag = false;
+            let mut i = 0;
+            while i < Self::KEYLIST_DIGITS.len() && !flag {
+                flag = code == Self::KEYLIST_DIGITS[i] as u16;
+                i += 1;
+            }
+            flag
+        } else {
+            false
+        }
     }
 
     pub const fn code(self) -> u16 {
@@ -302,6 +349,7 @@ pub struct Keys {
     /// index is represented by button id, value is held frames
     mouse: [u16; MOUSE_ENTRIES],
     local_key_queue: VecDeque<KeyEvent>,
+    local_text_queue: VecDeque<TextEvent>,
 }
 impl Default for Keys {
     fn default() -> Self {
@@ -314,6 +362,7 @@ impl Keys {
             keyboard: [0u16; KEYBOARD_ENTRIES],
             mouse: [0u16; MOUSE_ENTRIES],
             local_key_queue: VecDeque::new(),
+            local_text_queue: VecDeque::new(),
         }
     }
 
@@ -382,11 +431,16 @@ impl Keys {
                     }
                 }
             }
+            DeltaPacket::Text(char) => self.local_text_queue.push_back(TextEvent(char)),
         }
     }
 
     pub fn pop_key_event(&mut self) -> Option<KeyEvent> {
         self.local_key_queue.pop_back()
+    }
+
+    pub fn pop_text_event(&mut self) -> Option<TextEvent> {
+        self.local_text_queue.pop_back()
     }
 
     #[inline(always)]
