@@ -153,3 +153,56 @@ pub fn barrier_shader_storage() {
         MemoryBarrier(SHADER_STORAGE_BARRIER_BIT);
     }
 }
+
+pub fn exhaust_errors_log(label: Option<&str>) {
+    exhaust_errors(|e| tracing::warn!("[GL_ERROR]({}) = {e}", label.unwrap_or("???")));
+}
+
+pub fn exhaust_errors<F: Fn(u32)>(cb: F) {
+    loop {
+        let err = unsafe { GetError() };
+        if err != 0 {
+            cb(err);
+        } else {
+            break;
+        }
+    }
+}
+
+/// Run a sequence of OpenGL operations synchronously.
+///
+/// # Panics
+/// The function will panic if it's called on a thread without a valid
+/// OpenGL context.
+///
+/// # Return
+/// The function returns when all OpenGL operations have completed on the GPU.
+///
+/// Returns the time it took the GPU to execute all the specified operations,
+/// in nanoseconds.
+pub fn synchronous<F: FnOnce()>(gl_ops: F) -> u64 {
+    crate::assert_gl!();
+
+    let query = {
+        let mut id = 0;
+        unsafe {
+            CreateQueries(TIME_ELAPSED, 1, &mut id);
+        }
+        id
+    };
+
+    unsafe {
+        BeginQuery(TIME_ELAPSED, query);
+    }
+    gl_ops();
+    unsafe {
+        EndQuery(TIME_ELAPSED);
+    }
+
+    let mut elapsed = 0;
+    unsafe {
+        GetQueryObjectui64v(query, QUERY_RESULT, &mut elapsed);
+    }
+
+    elapsed
+}
