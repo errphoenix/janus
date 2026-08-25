@@ -151,7 +151,7 @@ impl<const FOLDS: usize, const SECTIONS: usize> InputStream<FOLDS, SECTIONS> {
         let fold = &section[fold_i];
 
         if side == 0 {
-            fold.write_left(packet);
+            fold.write_left_clearall(packet);
         } else {
             fold.write_right(packet);
         }
@@ -168,7 +168,7 @@ impl<const FOLDS: usize, const SECTIONS: usize> InputStream<FOLDS, SECTIONS> {
         if side == 0 {
             fold.read_left()
         } else {
-            fold.read_right()
+            fold.read_right_clearall()
         }
     }
 
@@ -203,7 +203,7 @@ impl<'stream, const FOLDS: usize, const SECTIONS: usize> Iterator
         if side == 0 {
             fold.read_left()
         } else {
-            fold.read_right()
+            fold.read_right_clearall()
         }
     }
 }
@@ -294,6 +294,12 @@ impl FoldBits {
     }
 
     #[inline(always)]
+    pub fn write_left_clearall(&self, packet: DeltaPacket) {
+        let bits: u32 = packet.into();
+        self.write_left_clearall_bits(bits);
+    }
+
+    #[inline(always)]
     pub fn write_left(&self, packet: DeltaPacket) {
         let bits: u32 = packet.into();
         self.write_left_bits(bits);
@@ -306,13 +312,25 @@ impl FoldBits {
     }
 
     #[inline(always)]
-    pub fn write_left_bits(&self, bits: u32) {
+    pub fn write_left_clearall_bits(&self, bits: u32) {
         self.0.store((bits as u64) << 32, Ordering::Release);
     }
 
     #[inline(always)]
+    pub fn write_left_bits(&self, bits: u32) {
+        self.0.fetch_or((bits as u64) << 32, Ordering::Release);
+    }
+
+    #[inline(always)]
     pub fn write_right_bits(&self, bits: u32) {
-        self.0.fetch_or(bits as u64, Ordering::AcqRel);
+        self.0.update(Ordering::Acquire, Ordering::Relaxed, |b| {
+            const LEFT_BITMASK: u64 = 0xffffffff00000000;
+            const RIGHT_BITMASK: u64 = 0xffffffff;
+            let left = b & LEFT_BITMASK;
+            let right = b & RIGHT_BITMASK;
+            let bits = bits as u64;
+            right & bits | bits | left
+        });
     }
 
     pub fn read_left(&self) -> Option<DeltaPacket> {
@@ -328,6 +346,16 @@ impl FoldBits {
     pub fn read_right(&self) -> Option<DeltaPacket> {
         let (_, right) = self.read_bits();
         self.write_right_bits(0);
+
+        if right == 0 {
+            return None;
+        }
+        Some(DeltaPacket::from_bits(right))
+    }
+
+    pub fn read_right_clearall(&self) -> Option<DeltaPacket> {
+        let (_, right) = self.read_bits();
+        self.0.store(0, Ordering::Release);
 
         if right == 0 {
             return None;
@@ -377,6 +405,7 @@ mod tests {
         assert_eq!(r, None);
         assert_eq!(l, Some(kb_ev));
 
+        fold.write_left(kb_ev);
         fold.write_right(mouse_ev);
         let r = fold.read_right();
         let l = fold.read_left();
@@ -388,5 +417,12 @@ mod tests {
         let r = fold.read_right();
         assert_eq!(l, Some(mouse_ev));
         assert_eq!(r, None);
+
+        fold.write_right(kb_ev);
+        fold.write_left(mouse_ev);
+        let l = fold.read_left();
+        let r = fold.read_right();
+        assert_eq!(l, Some(mouse_ev));
+        assert_eq!(r, Some(kb_ev));
     }
 }
