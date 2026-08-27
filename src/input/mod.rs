@@ -213,7 +213,7 @@ impl<'bits> SurfaceOptionsFlagsMut<'bits> {
     }
 
     pub const fn set_window_vsync(&mut self, window_vsync: bool) {
-        *self.0 = ((window_vsync as u8) << Self::BITMASK_WINDOW_VSYNC)
+        *self.0 = ((window_vsync as u8) << Self::BITSHIFT_WINDOW_VSYNC)
             | (*self.0 & !Self::BITMASK_WINDOW_VSYNC);
     }
 
