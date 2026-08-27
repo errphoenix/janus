@@ -4,7 +4,7 @@ use std::{
     collections::VecDeque,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
 };
 
@@ -38,14 +38,14 @@ pub fn stream<const SLOTS: usize, const SECTIONS: usize>() -> (
     };
 
     // clones local value and shared arc data used to sync
-    let cursor_options = state.cursor_options.clone();
+    let surface_options = state.surface_options.clone();
     let cursor = state.snapshot.cursor.clone();
     let mouse_wheel = state.snapshot.mouse_wheel.clone();
     let resync_flag = state.resync_flag.clone();
 
     let dispatcher = InputDispatcher {
         stream,
-        cursor_options,
+        surface_options,
         cursor,
         mouse_wheel,
         resync_flag,
@@ -66,7 +66,7 @@ type MouseWheelValue = f32;
 pub struct InputDispatcher<const SLOTS: usize, const SECTIONS: usize> {
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
 
-    cursor_options: Arc<CursorOptions>,
+    surface_options: Arc<SurfaceOptions>,
     cursor: Arc<Cursor>,
     mouse_wheel: Arc<sync::TriCell<MouseWheelValue>>,
 
@@ -89,16 +89,16 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS>
             self.cursor.delta.set((0.0, 0.0));
             self.mouse_wheel.set(0.0);
 
-            // cursor options handled separately
+            // surface options handled separately
         }
     }
 
-    pub fn cursor_options(&self) -> &CursorOptions {
-        &self.cursor_options
+    pub fn surface_options(&self) -> &SurfaceOptions {
+        &self.surface_options
     }
 
-    pub fn cursor_options_shared(&self) -> &Arc<CursorOptions> {
-        &self.cursor_options
+    pub fn surface_options_shared(&self) -> &Arc<SurfaceOptions> {
+        &self.surface_options
     }
 
     pub fn handle_mouse_events(&mut self, event: &winit::event::WindowEvent) {
@@ -154,30 +154,106 @@ impl<const SLOTS: usize, const SECTIONS: usize> InputDispatcher<SLOTS, SECTIONS>
     }
 }
 
-// todo: change to single AtomicU8
-#[derive(Debug, Default)]
-pub struct CursorOptions {
-    pub grabbed: AtomicBool,
-    pub dirty: AtomicBool,
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SurfaceOptionsFlags(u8);
+impl<'bits> SurfaceOptionsFlags {
+    pub const BITMASK_DIRTY: u8 = 0b10000000;
+    pub const BITMASK_CURSOR_GRAB: u8 = 0b00000001;
+    pub const BITMASK_WINDOW_VSYNC: u8 = 0b00000010;
+    pub const BITSHIFT_DIRTY: u8 = 7;
+    pub const BITSHIFT_CURSOR_GRAB: u8 = 0;
+    pub const BITSHIFT_WINDOW_VSYNC: u8 = 1;
+
+    pub const fn dirty(&self) -> bool {
+        self.0 & Self::BITMASK_DIRTY != 0
+    }
+
+    pub const fn cursor_grabbed(&self) -> bool {
+        self.0 & Self::BITMASK_CURSOR_GRAB != 0
+    }
+
+    pub const fn windows_has_vsync(&self) -> bool {
+        self.0 & Self::BITMASK_WINDOW_VSYNC != 0
+    }
+
+    pub const fn as_bits(&self) -> u8 {
+        self.0
+    }
 }
 
-impl CursorOptions {
-    pub fn check_grabbed(&self) -> bool {
-        self.grabbed.load(Ordering::Relaxed)
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SurfaceOptionsFlagsMut<'bits>(&'bits mut u8);
+impl<'bits> SurfaceOptionsFlagsMut<'bits> {
+    pub const BITMASK_DIRTY: u8 = SurfaceOptionsFlags::BITMASK_DIRTY;
+    pub const BITMASK_CURSOR_GRAB: u8 = SurfaceOptionsFlags::BITMASK_CURSOR_GRAB;
+    pub const BITMASK_WINDOW_VSYNC: u8 = SurfaceOptionsFlags::BITMASK_WINDOW_VSYNC;
+    pub const BITSHIFT_DIRTY: u8 = SurfaceOptionsFlags::BITSHIFT_DIRTY;
+    pub const BITSHIFT_CURSOR_GRAB: u8 = SurfaceOptionsFlags::BITSHIFT_CURSOR_GRAB;
+    pub const BITSHIFT_WINDOW_VSYNC: u8 = SurfaceOptionsFlags::BITSHIFT_WINDOW_VSYNC;
+
+    pub const fn dirty(&self) -> bool {
+        *self.0 & Self::BITMASK_DIRTY != 0
     }
 
-    pub fn check_dirty(&self) -> bool {
-        self.grabbed.load(Ordering::Relaxed)
+    pub const fn cursor_grabbed(&self) -> bool {
+        *self.0 & Self::BITMASK_CURSOR_GRAB != 0
     }
 
-    pub fn set_grabbed(&self, grabbed: bool) {
-        let changed = self
-            .grabbed
-            .compare_exchange(!grabbed, grabbed, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok();
+    pub const fn windows_has_vsync(&self) -> bool {
+        *self.0 & Self::BITMASK_WINDOW_VSYNC != 0
+    }
 
-        if changed {
-            self.dirty.store(true, Ordering::Relaxed);
+    pub const fn set_dirty(&mut self, dirty: bool) {
+        *self.0 = ((dirty as u8) << Self::BITSHIFT_DIRTY) | (*self.0 & !Self::BITMASK_DIRTY);
+    }
+
+    pub const fn set_cursor_grab(&mut self, cursor_grab: bool) {
+        *self.0 = ((cursor_grab as u8) << Self::BITSHIFT_CURSOR_GRAB)
+            | (*self.0 & !Self::BITMASK_CURSOR_GRAB);
+    }
+
+    pub const fn set_window_vsync(&mut self, window_vsync: bool) {
+        *self.0 = ((window_vsync as u8) << Self::BITMASK_WINDOW_VSYNC)
+            | (*self.0 & !Self::BITMASK_WINDOW_VSYNC);
+    }
+
+    pub const fn as_bits(&self) -> u8 {
+        *self.0
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SurfaceOptions {
+    flags: AtomicU8,
+}
+impl SurfaceOptions {
+    pub fn dirty(&self) -> bool {
+        self.flags.load(Ordering::Relaxed) & SurfaceOptionsFlags::BITMASK_DIRTY != 0
+    }
+
+    pub fn clear_dirty(&self) {
+        self.flags
+            .fetch_and(!SurfaceOptionsFlags::BITMASK_DIRTY, Ordering::Release);
+    }
+
+    pub fn read(&self) -> SurfaceOptionsFlags {
+        let bits = self.flags.load(Ordering::Relaxed);
+        SurfaceOptionsFlags(bits)
+    }
+
+    pub fn update<F: FnMut(SurfaceOptionsFlagsMut)>(&self, mut op: F) {
+        let mut bits = self.flags.load(Ordering::Acquire);
+        op(SurfaceOptionsFlagsMut(&mut bits));
+        self.flags.store(bits, Ordering::Release);
+    }
+
+    pub fn update_if_dirty<F: FnMut(SurfaceOptionsFlagsMut)>(&self, mut op: F) {
+        let bits = self.flags.load(Ordering::Relaxed);
+        if SurfaceOptionsFlags(bits).dirty() {
+            std::sync::atomic::fence(Ordering::Acquire);
+            let mut bits = bits;
+            op(SurfaceOptionsFlagsMut(&mut bits));
+            self.flags.store(bits, Ordering::Release);
         }
     }
 }
@@ -187,14 +263,14 @@ impl CursorOptions {
 #[derive(Debug, Default)]
 pub struct InputState<const SLOTS: usize, const SECTIONS: usize> {
     snapshot: InputSnapshot,
-    cursor_options: Arc<CursorOptions>,
+    surface_options: Arc<SurfaceOptions>,
     stream: Arc<InputStream<SLOTS, SECTIONS>>,
     resync_flag: Arc<AtomicBool>,
 }
 
 impl<const SLOTS: usize, const SECTIONS: usize> InputState<SLOTS, SECTIONS> {
-    pub fn cursor_options(&self) -> &Arc<CursorOptions> {
-        &self.cursor_options
+    pub fn surface_options(&self) -> &Arc<SurfaceOptions> {
+        &self.surface_options
     }
 
     pub fn sync(&mut self) {

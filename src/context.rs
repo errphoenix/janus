@@ -180,17 +180,13 @@ where
     }
 
     #[cfg(feature = "input")]
-    pub(crate) fn sync_cursor_options(&mut self) {
-        use std::sync::atomic::Ordering;
-
-        let cursor = self.input_dispatcher.cursor_options();
-        if let Ok(true) = cursor
-            .dirty
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |_| Some(false))
-        {
-            let grabbed = cursor.grabbed.load(Ordering::Relaxed);
-            self.set_cursor_grabbed(grabbed);
-        }
+    pub(crate) fn sync_surface_options(&mut self) {
+        let options = self.input_dispatcher.surface_options();
+        options.update_if_dirty(|mut flags| {
+            flags.set_dirty(false);
+            self.set_cursor_grabbed(flags.cursor_grabbed());
+            //todo: vsync
+        });
     }
 
     /// Force the cursor to change to a given `position`.

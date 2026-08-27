@@ -203,7 +203,7 @@ where
     ) {
         if cause == StartCause::Poll {
             #[cfg(feature = "input")]
-            self.sync_cursor_options();
+            self.sync_surface_options();
 
             self.input_dispatcher.sync();
         }
