@@ -1,9 +1,13 @@
+#[cfg(feature = "render")]
+use std::num::NonZeroU32;
 use std::ops::Deref;
 use std::time::{Duration, Instant};
 
 #[cfg(feature = "render")]
 use std::thread::JoinHandle;
 
+#[cfg(feature = "render")]
+use glutin::surface::{GlSurface, SwapInterval};
 #[cfg(feature = "render")]
 use winit::dpi::PhysicalPosition;
 
@@ -185,7 +189,7 @@ where
         options.update_if_dirty(|mut flags| {
             flags.set_dirty(false);
             self.set_cursor_grabbed(flags.cursor_grabbed());
-            //todo: vsync
+            self.set_window_vsync(flags.windows_has_vsync());
         });
     }
 
@@ -208,6 +212,26 @@ where
                 }
             }))
             .unwrap();
+    }
+
+    pub fn set_window_vsync(&self, vsync: bool) {
+        if let Some(display) = &self.display
+            && let Some(context) = &self.gl_ctx
+        {
+            let vsync_mode = match vsync {
+                true => SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
+                false => SwapInterval::DontWait,
+            };
+            match display.surface().set_swap_interval(context, vsync_mode) {
+                Ok(_) => tracing::info!(
+                    "Changed window V-SYNC state to: {}",
+                    if vsync { "enabled" } else { "disabled" }
+                ),
+                Err(err) => {
+                    tracing::error!("Failed to change V-SYNC state: {}", err.error_kind())
+                }
+            }
+        }
     }
 
     /// Set whether the cursor mode should be set to `grabbed`.

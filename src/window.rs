@@ -142,17 +142,6 @@ where
 
         load_gl_symbols(&config.display());
 
-        // Attempt to enable v-sync.
-        // Based on my previous projects, this seems to not work correctly
-        // on platforms that rely on wgl (windows).
-        if let Err(err) = gl_surface.set_swap_interval(
-            gl_ctx,
-            //glutin::surface::SwapInterval::Wait(NonZeroU32::new(1).unwrap()),
-            glutin::surface::SwapInterval::DontWait,
-        ) {
-            eprintln!("failed to set vsync to enabled: {err}");
-        }
-
         // Set display and panic if it existed before.
         assert!(
             self.display
