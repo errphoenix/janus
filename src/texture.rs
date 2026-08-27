@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{path::Path, sync::LazyLock};
 
 use super::{GlProperty, GpuResource, gl};
 use image::{DynamicImage, ImageError, ImageReader};
@@ -520,6 +520,11 @@ pub trait Tex: GpuResource + AsTexView {
         self.set_filtering_mag(filtering);
     }
 
+    fn set_filtering_anisotropic(&self, anisotropic_filtering: bool) {
+        let level = *MAX_ANISOTROPY_SUPPORT * (anisotropic_filtering as i32 as f32);
+        self.set_gl_parameterf(gl::TEXTURE_MAX_ANISOTROPY, level);
+    }
+
     fn set_wrapping_s(&self, wrapping: TextureWrapping) {
         let value = wrapping.property_enum();
         self.set_gl_parameteri(gl::TEXTURE_WRAP_S, value as i32);
@@ -794,6 +799,16 @@ impl TextureMetadata {
         self.gl_format
     }
 }
+
+static MAX_ANISOTROPY_SUPPORT: LazyLock<f32> = LazyLock::new(|| {
+    crate::assert_gl!();
+    let mut f = 0f32;
+    unsafe {
+        crate::gl::GetFloatv(crate::gl::MAX_TEXTURE_MAX_ANISOTROPY, &mut f);
+    }
+    tracing::info!("Max hardware texture mips anisotropy levels supported: {f}");
+    f
+});
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Hash, Default)]
 pub enum TextureFiltering {
