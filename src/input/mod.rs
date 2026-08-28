@@ -172,7 +172,7 @@ impl<'bits> SurfaceOptionsFlags {
         self.0 & Self::BITMASK_CURSOR_GRAB != 0
     }
 
-    pub const fn windows_has_vsync(&self) -> bool {
+    pub const fn window_has_vsync(&self) -> bool {
         self.0 & Self::BITMASK_WINDOW_VSYNC != 0
     }
 
@@ -199,7 +199,7 @@ impl<'bits> SurfaceOptionsFlagsMut<'bits> {
         *self.0 & Self::BITMASK_CURSOR_GRAB != 0
     }
 
-    pub const fn windows_has_vsync(&self) -> bool {
+    pub const fn window_has_vsync(&self) -> bool {
         *self.0 & Self::BITMASK_WINDOW_VSYNC != 0
     }
 

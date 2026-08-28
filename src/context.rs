@@ -45,6 +45,13 @@ pub type DumbContext = Context<EmptyRoutine, EmptyRoutine>;
 #[cfg(feature = "input")]
 type InputDispatcher = DispatchInput<{ input::SLOT_COUNT }, { input::SECTION_COUNT }>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct CachedSurfaceOptions {
+    init: bool,
+    pub window_vsync: bool,
+    pub cursor_grab: bool,
+}
+
 /// Stores glutin's context handles and implements winit's event handling.
 ///
 /// This also makes use of 3 traits that define the application's routine:
@@ -71,6 +78,7 @@ where
 
     logic_thread: Option<JoinHandle<()>>,
 
+    pub(crate) cached_surface_options: CachedSurfaceOptions,
     pub(crate) parameters: crate::window::DisplayParameters,
     pub(crate) display: Option<crate::window::DisplayHandle>,
     pub(crate) gl_ctx: Option<glutin::context::PossiblyCurrentContext>,
@@ -162,6 +170,7 @@ where
             parameters,
             display: None,
             gl_ctx: None,
+            cached_surface_options: CachedSurfaceOptions::default(),
             gl_display: crate::window::GlDisplayState::Pending,
         }
     }
@@ -186,11 +195,37 @@ where
     #[cfg(feature = "input")]
     pub(crate) fn sync_surface_options(&mut self) {
         let options = self.input_dispatcher.surface_options();
+
+        let mut updated = false;
+        let mut new_cursor_grab = false;
+        let mut new_window_vsync = false;
+
         options.update_if_dirty(|mut flags| {
             flags.set_dirty(false);
-            self.set_cursor_grabbed(flags.cursor_grabbed());
-            self.set_window_vsync(flags.windows_has_vsync());
+            updated = true;
+
+            let is_init = self.cached_surface_options.init;
+            let flag_cursor_grab = flags.cursor_grabbed();
+            let flag_window_vsync = flags.window_has_vsync();
+            let cache_cursor_grab = self.cached_surface_options.cursor_grab;
+            let cache_window_vsync = self.cached_surface_options.window_vsync;
+
+            new_cursor_grab = flag_cursor_grab;
+            new_window_vsync = flag_window_vsync;
+
+            if cache_cursor_grab != flag_cursor_grab || !is_init {
+                self.set_cursor_grabbed(flag_cursor_grab);
+            }
+            if cache_window_vsync != flag_window_vsync || !is_init {
+                self.set_window_vsync(flag_window_vsync);
+            }
         });
+
+        self.cached_surface_options.init |= updated;
+        if updated {
+            self.cached_surface_options.cursor_grab = new_cursor_grab;
+            self.cached_surface_options.window_vsync = new_window_vsync;
+        }
     }
 
     /// Force the cursor to change to a given `position`.
