@@ -270,7 +270,7 @@ impl<T: Clone + Send + Sync + std::fmt::Debug> Mirror<T> {
     /// This does not directly ensure the value has been synchronised.
     ///
     /// You may want to do so by explicitly calling any of the sync functions.
-    pub fn get(&self) -> &T {
+    pub const fn get(&self) -> &T {
         &self.local
     }
 }
