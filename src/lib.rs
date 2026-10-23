@@ -15,6 +15,10 @@ pub mod jobs;
 
 pub mod sync;
 
+pub mod prelude;
+
+pub use prelude::*;
+
 #[cfg(all(feature = "render", feature = "state"))]
 pub fn run<Init, State, Render>(mut context: Context<Init, State, Render>)
 where
@@ -33,11 +37,6 @@ use std::{
     hash::{BuildHasherDefault, Hasher},
 };
 
-#[cfg(feature = "state")]
-use context::{Context, Setup, Update};
-
-#[cfg(all(feature = "state", feature = "render"))]
-use context::Draw;
 #[cfg(all(feature = "state", feature = "render"))]
 use winit::event_loop::{ControlFlow, EventLoop};
 
