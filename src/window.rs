@@ -195,6 +195,16 @@ where
             self.sync_surface_options();
 
             self.input_dispatcher.sync();
+
+            if let Some(DisplayHandle { gl_surface, .. }) = self.display.as_ref() {
+                let ctx = self.gl_ctx.as_ref().unwrap();
+
+                let delta = &mut self.render_delta;
+                self.renderer.draw(delta.delta());
+                delta.sync();
+
+                gl_surface.swap_buffers(ctx).unwrap();
+            }
         }
     }
 
@@ -205,18 +215,6 @@ where
         event: WindowEvent,
     ) {
         match event {
-            WindowEvent::RedrawRequested => {
-                if let Some(DisplayHandle { gl_surface, window }) = self.display.as_ref() {
-                    let ctx = self.gl_ctx.as_ref().unwrap();
-
-                    let delta = &mut self.render_delta;
-                    self.renderer.draw(delta.delta());
-                    delta.sync();
-
-                    gl_surface.swap_buffers(ctx).unwrap();
-                    window.request_redraw();
-                }
-            }
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(DisplayHandle { gl_surface, .. }) = self.display.as_ref() {
