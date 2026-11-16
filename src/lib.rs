@@ -135,3 +135,8 @@ impl Hasher for StringHash {
         self.0 = i;
     }
 }
+impl<'str> From<&'str str> for StringHash {
+    fn from(value: &'str str) -> Self {
+        crate::hash_string(value)
+    }
+}
